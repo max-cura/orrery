@@ -4,11 +4,11 @@
 #![feature(iter_intersperse)]
 #![allow(dead_code)]
 
+mod herd;
 mod op;
 mod partition;
 mod sched;
 mod sets;
-mod work;
 
 use crate::op::{DatabaseContext, ResolvedTransaction};
 use crate::sched::TransactionFinishedInner;
@@ -63,6 +63,9 @@ pub struct Transaction {
 impl Transaction {
     pub fn no(&self) -> usize {
         self.number
+    }
+    pub fn execute(&mut self, db_ctx: &mut DatabaseContext, storage: &Storage) -> ExecutionResult {
+        unimplemented!()
     }
 }
 

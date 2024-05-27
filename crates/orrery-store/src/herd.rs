@@ -150,10 +150,8 @@ impl Worker {
     fn run_partition(&mut self, mut partition: PartitionTask) {
         let mut db_ctx = DatabaseContext::new();
         for txn in partition.partition.transactions_mut() {
-            /* TODO: execute the transaction on `db_ctx` with `storage` as the backing store */
-            let result = Ok(vec![]);
-
-            txn.finished.take().unwrap().finish(result)
+            let result = txn.execute(&mut db_ctx, &partition.storage);
+            txn.finished.take().unwrap().finish(result);
         }
         partition.storage.apply(db_ctx);
     }
