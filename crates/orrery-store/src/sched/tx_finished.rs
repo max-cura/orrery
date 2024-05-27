@@ -1,15 +1,15 @@
+use crate::ExecutionResult;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll, Waker};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use crate::ExecutionResult;
+use std::task::{Context, Poll, Waker};
 
 #[derive(Debug)]
 pub struct TransactionFinishedInner {
     value: parking_lot::Mutex<Option<ExecutionResult>>,
     finished: AtomicBool,
-    waker: parking_lot::Mutex<Option<Waker>>
+    waker: parking_lot::Mutex<Option<Waker>>,
 }
 
 pub struct TransactionFinished(Arc<TransactionFinishedInner>);

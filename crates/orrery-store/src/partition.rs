@@ -1,13 +1,13 @@
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use crossbeam::deque::Injector;
-use dashmap::DashMap;
-use dashmap::mapref::entry::Entry;
-use parking_lot::Mutex;
-use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
 use crate::sets::AccessSet;
 use crate::Transaction;
+use crossbeam::deque::Injector;
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
+use parking_lot::Mutex;
+use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 pub struct DependencyGraphBuilder {
     // (table, row) -> (write?, TxId[])
@@ -20,7 +20,7 @@ impl DependencyGraphBuilder {
         Self {
             access_set: Default::default(),
             transactions: Default::default(),
-            generation
+            generation,
         }
     }
 
@@ -40,7 +40,10 @@ impl DependencyGraphBuilder {
                     g.push((txn.no(), false));
                 }
                 Entry::Vacant(v) => {
-                    v.insert(Arc::new((AtomicBool::new(false), Mutex::new(vec![(txn.no(), false)]))));
+                    v.insert(Arc::new((
+                        AtomicBool::new(false),
+                        Mutex::new(vec![(txn.no(), false)]),
+                    )));
                 }
             }
         }
@@ -54,7 +57,10 @@ impl DependencyGraphBuilder {
                     o.get().0.store(true, Ordering::Release);
                 }
                 Entry::Vacant(v) => {
-                    v.insert(Arc::new((AtomicBool::new(true), Mutex::new(vec![(txn.no(), true)]))));
+                    v.insert(Arc::new((
+                        AtomicBool::new(true),
+                        Mutex::new(vec![(txn.no(), true)]),
+                    )));
                 }
             }
         }
@@ -63,38 +69,47 @@ impl DependencyGraphBuilder {
 
         self.generation
     }
-    pub(crate) fn calculate_transaction_interactions(self) -> (HashMap<(usize, usize), (bool, Vec<(usize, bool)>)>, BTreeMap<usize, Transaction>) {
-        let Self { access_set, transactions, generation: _ } = self;
-        let access_set: HashMap<(usize, usize), (bool, Vec<(usize, bool)>)> = access_set.into_iter().map(|(k, a)| {
-            // PANIC: only if more than 1 strong reference exists
-            let (b, v) = Arc::into_inner(a).unwrap();
-            (k, (b.load(Ordering::Acquire), v.into_inner()))
-        }).collect();
-        let mut transactions : BTreeMap<usize, Transaction> = transactions
+    pub(crate) fn calculate_transaction_interactions(
+        self,
+    ) -> (
+        HashMap<(usize, usize), (bool, Vec<(usize, bool)>)>,
+        BTreeMap<usize, Transaction>,
+    ) {
+        let Self {
+            access_set,
+            transactions,
+            generation: _,
+        } = self;
+        let access_set: HashMap<(usize, usize), (bool, Vec<(usize, bool)>)> = access_set
             .into_iter()
+            .map(|(k, a)| {
+                // PANIC: only if more than 1 strong reference exists
+                let (b, v) = Arc::into_inner(a).unwrap();
+                (k, (b.load(Ordering::Acquire), v.into_inner()))
+            })
             .collect();
+        let mut transactions: BTreeMap<usize, Transaction> = transactions.into_iter().collect();
         // intersect_set is specifically only the set of transactions who overlap in write set in
         // some way.
-        transactions.par_iter_mut()
-            .for_each(|(_, f)| {
-                for x in f.write_set.iter_keys() {
-                    let (_, v) = access_set.get(&x).unwrap();
-                    for &(tx, _) in v {
-                        if !f.intersect_set.contains(&tx) {
-                            f.intersect_set.push(tx);
-                        }
+        transactions.par_iter_mut().for_each(|(_, f)| {
+            for x in f.write_set.iter_keys() {
+                let (_, v) = access_set.get(&x).unwrap();
+                for &(tx, _) in v {
+                    if !f.intersect_set.contains(&tx) {
+                        f.intersect_set.push(tx);
                     }
                 }
-                for x in f.readonly_set.iter_keys() {
-                    let (_, v) = access_set.get(&x).unwrap();
-                    for &(tx, w) in v {
-                        if w && !f.intersect_set.contains(&tx) {
-                            f.intersect_set.push(tx);
-                        }
+            }
+            for x in f.readonly_set.iter_keys() {
+                let (_, v) = access_set.get(&x).unwrap();
+                for &(tx, w) in v {
+                    if w && !f.intersect_set.contains(&tx) {
+                        f.intersect_set.push(tx);
                     }
                 }
-                f.intersect_set.sort_unstable();
-            });
+            }
+            f.intersect_set.sort_unstable();
+        });
         (access_set, transactions)
     }
 }
@@ -114,7 +129,12 @@ pub struct Partition {
 }
 impl Partition {
     pub fn empty() -> Self {
-        Self { readonly_set: AccessSet::empty(), write_set: AccessSet::empty(), transactions: Vec::new(), txn_nos: Vec::new() }
+        Self {
+            readonly_set: AccessSet::empty(),
+            write_set: AccessSet::empty(),
+            transactions: Vec::new(),
+            txn_nos: Vec::new(),
+        }
     }
     pub fn add(&mut self, txn: Transaction) {
         // println!("add {}: WRITE {}", txn.no(), txn.write_set.to_string());
@@ -132,7 +152,11 @@ impl Partition {
         r.dedup();
         assert_eq!(l1, r.len());
     }
-    pub fn try_add(&mut self, txn: Transaction, limits: &PartitionLimits) -> Result<(), Transaction> {
+    pub fn try_add(
+        &mut self,
+        txn: Transaction,
+        limits: &PartitionLimits,
+    ) -> Result<(), Transaction> {
         // println!("try_add {}: WRITE {}", txn.no(), txn.write_set.to_string());
         // ros = R(T) \ W(P)
         // R'(P) = (R(P) \ W(T)) u ros
@@ -145,7 +169,9 @@ impl Partition {
         let new_read_size = self.readonly_set.len() + ros.len();
         let new_write_size = self.write_set.len() + ws.len();
         let new_access_size = new_read_size + new_write_size;
-        if new_write_size <= limits.partition_max_write && new_access_size <= limits.partition_max_access {
+        if new_write_size <= limits.partition_max_write
+            && new_access_size <= limits.partition_max_access
+        {
             self.readonly_set.subtract_(&ws);
             self.readonly_set.union_nonoverlapping_unchecked_(&ros);
             self.write_set.union_nonoverlapping_unchecked_(&ws);
@@ -170,24 +196,40 @@ pub struct PartitionDispatcher {
     defer_set: BTreeMap<usize, Transaction>,
 }
 impl PartitionDispatcher {
-    pub fn partition(&mut self, injector: Arc<Injector<Partition>>, partition_limits: &PartitionLimits) {
+    pub fn batch_done(
+        &self
+    ) -> bool {
+        self.transactions.is_empty() && self.defer_set.is_empty()
+    }
+    pub fn load_deferred(
+        &mut self,
+    ) {
+        assert!(self.transactions.is_empty());
+        std::mem::swap(&mut self.transactions, &mut self.defer_set);
+    }
+    pub fn dispatch_one_round(
+        &mut self,
+        injector: Arc<Injector<Partition>>,
+        partition_limits: &PartitionLimits,
+    ) {
         let mut p = Partition::empty();
         let mut i = 0;
-        loop {
+        'outer: loop {
             if self.transactions.is_empty() {
-                break
+                break 'outer;
             }
             p.add(self.transactions.pop_first().unwrap().1);
             'inner: loop {
                 if i == p.transactions.len() {
-                    break 'inner
+                    break 'inner;
                 }
                 for j in 0..p.transactions[i].intersect_set.len() {
                     let ix_txn_no = p.transactions[i].intersect_set[j];
-                    if !p.txn_nos.contains(&ix_txn_no) && self.transactions.contains_key(&ix_txn_no) {
+                    if !p.txn_nos.contains(&ix_txn_no) && self.transactions.contains_key(&ix_txn_no)
+                    {
                         let txn = self.transactions.remove(&ix_txn_no).unwrap();
                         match p.try_add(txn, partition_limits) {
-                            Ok(()) => {},
+                            Ok(()) => {}
                             Err(txn) => {
                                 self.defer_set.insert(ix_txn_no, txn);
                             }

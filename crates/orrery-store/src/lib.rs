@@ -2,39 +2,41 @@
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
 #![feature(iter_intersperse)]
-
 #![allow(dead_code)]
 
-mod sets;
 mod op;
 mod partition;
 mod sched;
+mod sets;
+mod work;
 
-use std::collections::BTreeMap;
-use std::mem::ManuallyDrop;
-use std::sync::Arc;
 use crate::sched::TransactionFinishedInner;
 use crate::sets::AccessSet;
+use std::cell::UnsafeCell;
+use std::collections::BTreeMap;
+use std::mem::{ManuallyDrop, MaybeUninit};
+use std::sync::Arc;
+use crate::op::ResolvedTransaction;
 
-#[derive(Copy, Clone)]
-struct FreeListNode {
-    pub next: usize,
-}
-
-union RowStorage {
-    row: ManuallyDrop<Vec<u8>>,
-    free_list_node: FreeListNode
-}
-
-struct TableSet {
-
-}
+struct TableSet {}
 impl TableSet {
     pub fn get(&self, _name: &str) -> Option<&Table> {
         unimplemented!()
     }
 }
 
+#[derive(Copy, Clone)]
+struct FreeListNode {
+    pub next: usize,
+}
+
+union RowStorageInner {
+    data: ManuallyDrop<MaybeUninit<Vec<u8>>>,
+    free_list_node: FreeListNode,
+}
+struct RowStorage {
+    inner: UnsafeCell<RowStorageInner>,
+}
 struct Table {
     index: BTreeMap<Vec<u8>, usize>,
     backing_rows: Vec<RowStorage>,
@@ -55,15 +57,15 @@ pub struct Transaction {
     write_set: AccessSet,
     intersect_set: Vec<usize>,
     number: usize,
-
+    resolved: ResolvedTransaction,
     finished: Option<Arc<TransactionFinishedInner>>,
 }
 impl Transaction {
-    pub fn no(&self) -> usize { self.number }
+    pub fn no(&self) -> usize {
+        self.number
+    }
 }
 
 #[derive(Debug)]
-pub enum ExecutionError {
-
-}
+pub enum ExecutionError {}
 type ExecutionResult = Result<Vec<u8>, ExecutionError>;

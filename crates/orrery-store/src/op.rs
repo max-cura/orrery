@@ -1,8 +1,8 @@
 // can't do a simple enum-as-Ty, since such a type is infinitely recursive
 
+use std::fmt::{Debug, Formatter};
+use orrery_wire::{Cond, RowLocator, SSA};
 use std::mem::ManuallyDrop;
-use orrery_wire::{Cond, Op, RowLocator, SSA};
-use crate::TableSet;
 
 union RtValue {
     boolean: bool,
@@ -25,6 +25,11 @@ struct DatabaseContext {
     // access index -> (table, index)
     access_map: Vec<(usize, (usize, usize))>,
 }
+impl Debug for DatabaseContext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        unimplemented!()
+    }
+}
 
 pub enum ResolvedOp {
     SSA(SSA),
@@ -32,41 +37,21 @@ pub enum ResolvedOp {
         table: usize,
         row: usize,
     },
-    Write {
+    Update {
+        table: usize,
+        row: usize,
+        value: usize,
+    },
+    Insert {
         table: usize,
         row: usize,
         value: usize,
     },
     Cond(Cond),
     Jump(usize),
+    Value(RtValue),
     InvalidRead(RowLocator),
     InvalidWrite(RowLocator, usize),
-}
-impl ResolvedOp {
-    pub fn try_from_wire(wire: Op, table_set: &TableSet) -> Self {
-        match wire {
-            Op::SSA(x) => Self::SSA(x),
-            Op::Read(rl) => {
-                let Some((table, row)) = table_set.get(&rl.table)
-                    .and_then(|table| table.index_to_backing_row(&rl.row_key)
-                        .map(|row| (table.id(), row))) else {
-                    return Self::InvalidRead(rl);
-                };
-                Self::Read { table, row }
-            }
-            Op::Write(rl, v) => {
-                let Some((table, row)) = table_set.get(&rl.table)
-                    .and_then(|table| table.index_to_backing_row(&rl.row_key)
-                        .map(|row| (table.id(), row))) else {
-                    return Self::InvalidWrite(rl, v);
-                };
-                Self::Write { table, row, value: v }
-
-            }
-            Op::Cond(c) => Self::Cond(c),
-            Op::Jump(j) => Self::Jump(j),
-        }
-    }
 }
 
 struct SSAContext {
@@ -74,19 +59,25 @@ struct SSAContext {
     items: Vec<ResolvedOp>,
     values: Vec<RtValue>,
 }
+impl Debug for SSAContext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        unimplemented!()
+    }
+}
 
 // todo: in-place operations
 // todo: JIT'ing
 // ???
 // much possibility
 
-struct ExecutableTransaction {
+#[derive(Debug)]
+pub struct ResolvedTransaction {
     ssa_ctx: SSAContext,
     db_ctx: DatabaseContext,
 }
 
 struct ExecutionOutput {
-    rt_value: RtValue
+    rt_value: RtValue,
 }
 
 enum ExecutionError {

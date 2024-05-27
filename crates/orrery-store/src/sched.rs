@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use crate::partition::DependencyGraphBuilder;
+use crate::Transaction;
 use arc_swap::ArcSwap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
-use crate::partition::DependencyGraphBuilder;
-use crate::Transaction;
 
 mod tx_finished;
 pub use tx_finished::TransactionFinished;
@@ -44,7 +44,9 @@ impl Threshold for FixedConfigThreshold {
     fn should_flush(&self, intake_stats: IntakeStats) -> bool {
         if self.max_access_set_size > 0 && self.max_access_set_size < intake_stats.access_set_size {
             true
-        } else if self.max_transaction_count > 0 && self.max_transaction_count < intake_stats.transaction_count {
+        } else if self.max_transaction_count > 0
+            && self.max_transaction_count < intake_stats.transaction_count
+        {
             true
         } else {
             false
@@ -67,7 +69,10 @@ pub struct TransactionScheduler<TH: Threshold> {
     last_flush: parking_lot::Mutex<Instant>,
 }
 
-pub fn new_with_watchdog<TH: Threshold + 'static>(threshold: TH, pipe: UnboundedSender<DependencyGraphBuilder>) -> Arc<TransactionScheduler<TH>> {
+pub fn new_with_watchdog<TH: Threshold + 'static>(
+    threshold: TH,
+    pipe: UnboundedSender<DependencyGraphBuilder>,
+) -> Arc<TransactionScheduler<TH>> {
     let max_flush_interval = threshold.max_flush_interval();
 
     let (ts, mut flush_receiver) = TransactionScheduler::new(threshold, pipe);
@@ -76,13 +81,13 @@ pub fn new_with_watchdog<TH: Threshold + 'static>(threshold: TH, pipe: Unbounded
 
     let watchdog: JoinHandle<()> = tokio::spawn(async move {
         'watchdog_loop: loop {
-            match tokio::time::timeout(max_flush_interval, async {
-                flush_receiver.recv().await
-            }).await {
+            match tokio::time::timeout(max_flush_interval, async { flush_receiver.recv().await })
+                .await
+            {
                 Ok(o) => {
                     /* okay */
                     if o.is_none() {
-                        break 'watchdog_loop
+                        break 'watchdog_loop;
                     }
                 }
                 Err(_) => {
@@ -105,17 +110,23 @@ pub fn new_with_watchdog<TH: Threshold + 'static>(threshold: TH, pipe: Unbounded
 impl<TH: Threshold> TransactionScheduler<TH> {
     /// Do not call this function directly. Use [`sched::new_with_watchdog`](new_with_watchdog)
     /// instead.
-    fn new(threshold: TH, pipe: UnboundedSender<DependencyGraphBuilder>) -> (Self, UnboundedReceiver<Instant>) {
+    fn new(
+        threshold: TH,
+        pipe: UnboundedSender<DependencyGraphBuilder>,
+    ) -> (Self, UnboundedReceiver<Instant>) {
         let (flush_sender, flush_receiver) = tokio::sync::mpsc::unbounded_channel();
 
-        (Self {
-            dependency_graph_builder: ArcSwap::new(Arc::new(DependencyGraphBuilder::new(0))),
-            threshold,
-            pipe,
-            generation: AtomicU64::new(0),
-            flush_sender,
-            last_flush: parking_lot::Mutex::new(Instant::now()),
-        }, flush_receiver)
+        (
+            Self {
+                dependency_graph_builder: ArcSwap::new(Arc::new(DependencyGraphBuilder::new(0))),
+                threshold,
+                pipe,
+                generation: AtomicU64::new(0),
+                flush_sender,
+                last_flush: parking_lot::Mutex::new(Instant::now()),
+            },
+            flush_receiver,
+        )
     }
 
     fn intake_stats(&self, dg: &arc_swap::Guard<Arc<DependencyGraphBuilder>>) -> IntakeStats {
@@ -126,9 +137,9 @@ impl<TH: Threshold> TransactionScheduler<TH> {
     }
 
     fn flush_internal(&self, flush_gen: u64) {
-        let old = self.dependency_graph_builder.swap(
-            Arc::new(DependencyGraphBuilder::new(flush_gen + 2))
-        );
+        let old = self
+            .dependency_graph_builder
+            .swap(Arc::new(DependencyGraphBuilder::new(flush_gen + 2)));
         {
             let mut guard = self.last_flush.lock();
             *guard = Instant::now();
@@ -142,13 +153,15 @@ impl<TH: Threshold> TransactionScheduler<TH> {
         // once `old` is the only reference, we can call Arc::into_inner on it and send it down the
         // pipe
         let dg = Arc::into_inner(old).unwrap();
-        self.pipe.send(dg)
-            .expect("failed to pipe dependency graph");
-
+        self.pipe.send(dg).expect("failed to pipe dependency graph");
     }
 
     fn flush(&self, flush_gen: u64) -> bool {
-        if self.generation.compare_exchange(flush_gen, flush_gen + 1, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        if self
+            .generation
+            .compare_exchange(flush_gen, flush_gen + 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
             self.flush_internal(flush_gen);
             true
         } else {

@@ -6,24 +6,34 @@ pub struct RowSet {
 }
 impl RowSet {
     pub fn intersects(&self, rhs: &RowSet) -> bool {
-        if self.table != rhs.table { return false }
-        if self.rows.is_empty() || rhs.rows.is_empty() { return false }
-        if self.rows.last().unwrap() < rhs.rows.first().unwrap() { return false }
+        if self.table != rhs.table {
+            return false;
+        }
+        if self.rows.is_empty() || rhs.rows.is_empty() {
+            return false;
+        }
+        if self.rows.last().unwrap() < rhs.rows.first().unwrap() {
+            return false;
+        }
         let mut left = self.rows.iter();
         let mut li = left.next().unwrap();
         for rj in rhs.rows.iter() {
             while rj > li {
                 li = match left.next() {
-                    None => { return false }
-                    Some(x) => { x }
+                    None => return false,
+                    Some(x) => x,
                 }
             }
-            if rj == li { return true }
+            if rj == li {
+                return true;
+            }
         }
         false
     }
     pub fn union_(&mut self, rhs: &RowSet) {
-        if self.rows.is_empty() { return }
+        if self.rows.is_empty() {
+            return;
+        }
         let orig_len = self.rows.len();
         let mut i = 0;
         for rj in rhs.rows.iter() {
@@ -38,16 +48,20 @@ impl RowSet {
         self.rows.sort_unstable()
     }
     pub fn subtract_(&mut self, rhs: &RowSet) {
-        if self.rows.is_empty() || rhs.rows.is_empty() { return }
+        if self.rows.is_empty() || rhs.rows.is_empty() {
+            return;
+        }
         let mut j = 0;
         self.rows.retain(|&r| {
             while j < rhs.rows.len() && rhs.rows[j] < r {
                 j += 1;
             }
-            if j >= rhs.rows.len() { return true }
+            if j >= rhs.rows.len() {
+                return true;
+            }
             if rhs.rows[j] == r {
                 j += 1;
-                return false
+                return false;
             } else {
                 true
             }
@@ -66,7 +80,9 @@ pub struct AccessSet {
 
 impl AccessSet {
     pub fn empty() -> AccessSet {
-        AccessSet { row_sets: Vec::new() }
+        AccessSet {
+            row_sets: Vec::new(),
+        }
     }
 }
 
@@ -80,13 +96,13 @@ impl AccessSet {
         for rj in rhs.row_sets.iter() {
             while rj.table > lc.table {
                 lc = match left.next() {
-                    None => { return false }
-                    Some(x) => { x }
+                    None => return false,
+                    Some(x) => x,
                 }
             }
             if rj.table == lc.table {
                 if rj.intersects(lc) {
-                    return true
+                    return true;
                 }
             }
         }
@@ -110,7 +126,9 @@ impl AccessSet {
         self.row_sets.sort_unstable_by_key(|rs| rs.table);
     }
     pub fn union_nonoverlapping_unchecked_(&mut self, rhs: &AccessSet) {
-        if self.row_sets.is_empty() { return }
+        if self.row_sets.is_empty() {
+            return;
+        }
         let orig_len = self.row_sets.len();
         let mut i = 0;
         for rj in rhs.row_sets.iter() {
@@ -125,13 +143,17 @@ impl AccessSet {
         self.row_sets.sort_unstable_by_key(|rs| rs.table);
     }
     pub fn subtract_(&mut self, rhs: &AccessSet) {
-        if self.row_sets.is_empty() || rhs.row_sets.is_empty() { return }
+        if self.row_sets.is_empty() || rhs.row_sets.is_empty() {
+            return;
+        }
         let mut j = 0;
         self.row_sets.retain_mut(|r| {
             while j < rhs.row_sets.len() && rhs.row_sets[j].table < r.table {
                 j += 1;
             }
-            if j >= rhs.row_sets.len() { return true }
+            if j >= rhs.row_sets.len() {
+                return true;
+            }
             if rhs.row_sets[j].table == r.table {
                 r.subtract_(&rhs.row_sets[j]);
                 !r.rows.is_empty()
@@ -141,11 +163,18 @@ impl AccessSet {
         });
     }
     pub fn iter_keys(&self) -> AccessKeysIter {
-        AccessKeysIter { inner: self, rs: 0, r: 0 }
+        AccessKeysIter {
+            inner: self,
+            rs: 0,
+            r: 0,
+        }
     }
     // for debugging
     pub fn to_string(&self) -> String {
-        self.iter_keys().map(|(_,b)| b.to_string()).intersperse(" ".to_string()).collect::<String>()
+        self.iter_keys()
+            .map(|(_, b)| b.to_string())
+            .intersperse(" ".to_string())
+            .collect::<String>()
     }
 }
 
@@ -166,7 +195,7 @@ impl<'a> Iterator for AccessKeysIter<'a> {
                 self.r = 0;
                 self.rs += 1;
                 if self.rs >= self.inner.row_sets.len() {
-                    return None
+                    return None;
                 }
             }
             Some(ret)

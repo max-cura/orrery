@@ -5,11 +5,6 @@ pub struct SSA {
     pub inputs: Vec<usize>,
     pub operation: usize,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RowLocator {
-    pub table: String,
-    pub row_key: Vec<u8>,
-}
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Cond {
     pub cond: usize,
@@ -17,12 +12,19 @@ pub struct Cond {
     pub else_branch: usize,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowLocator {
+    pub table: String,
+    pub row_key: Vec<u8>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Op {
     SSA(SSA),
     Read(RowLocator),
-    Write(RowLocator, usize),
+    Update(RowLocator, usize),
+    Insert(RowLocator, usize),
     Cond(Cond),
     Jump(usize),
+    Value(/* todo */)
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionIR {
@@ -31,5 +33,5 @@ pub struct TransactionIR {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionRequest {
-    pub ir: TransactionIR
+    pub ir: TransactionIR,
 }
