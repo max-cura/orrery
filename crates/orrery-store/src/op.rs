@@ -19,7 +19,7 @@ union RtValue {
 //     MayRead{ access_id: usize },
 //     /* Abort */
 // }
-struct DatabaseContext {
+pub struct DatabaseContext {
     // side_effects: Vec<SideEffect>,
     access_cache: Vec<(usize, RtValue)>,
     // access index -> (table, index)
@@ -73,7 +73,6 @@ impl Debug for SSAContext {
 #[derive(Debug)]
 pub struct ResolvedTransaction {
     ssa_ctx: SSAContext,
-    db_ctx: DatabaseContext,
 }
 
 struct ExecutionOutput {

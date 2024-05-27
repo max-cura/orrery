@@ -1,0 +1,3 @@
+let x = (Table.columns <users> [:username, :last_online]) in
+    let filter = \x -> x:last_online >= @@now in
+        List.filter x filter

@@ -136,6 +136,9 @@ impl Partition {
             txn_nos: Vec::new(),
         }
     }
+    pub fn transactions_mut(&mut self) -> &mut [Transaction] {
+        &mut self.transactions
+    }
     pub fn add(&mut self, txn: Transaction) {
         // println!("add {}: WRITE {}", txn.no(), txn.write_set.to_string());
         // readonly_set procedure is a little more involved since invalidation may occur
