@@ -2,5 +2,6 @@
 resolver = "2"
 members = [
 #    "crates/orrery-server",
-    "crates/orrery-store"
+    "crates/orrery-store",
+    "crates/orrery-wire"
 ]

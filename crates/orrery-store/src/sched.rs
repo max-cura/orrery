@@ -179,7 +179,7 @@ impl<TH: Threshold> TransactionScheduler<TH> {
         }
     }
 
-    pub fn execute(&self, mut transaction: Transaction) -> TransactionFinished {
+    pub fn enqueue_transaction(&self, mut transaction: Transaction) -> TransactionFinished {
         let (future, signal) = TransactionFinished::new();
         transaction.finished = Some(signal);
 
