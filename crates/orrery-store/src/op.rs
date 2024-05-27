@@ -25,6 +25,13 @@ pub struct DatabaseContext {
     // access index -> (table, index)
     access_map: Vec<(usize, (usize, usize))>,
 }
+
+impl DatabaseContext {
+    pub fn new() -> Self {
+        unimplemented!()
+    }
+}
+
 impl Debug for DatabaseContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         unimplemented!()
@@ -64,6 +71,7 @@ impl Debug for SSAContext {
         unimplemented!()
     }
 }
+unsafe impl Send for SSAContext {}
 
 // todo: in-place operations
 // todo: JIT'ing

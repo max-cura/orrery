@@ -1,10 +1,9 @@
 use crate::sets::AccessSet;
 use crate::Transaction;
-use crossbeam::deque::Injector;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use parking_lot::Mutex;
-use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
+use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -15,6 +14,7 @@ pub struct DependencyGraphBuilder {
     transactions: DashMap<usize, Transaction>,
     generation: u64,
 }
+unsafe impl Sync for DependencyGraphBuilder {}
 impl DependencyGraphBuilder {
     pub fn new(generation: u64) -> Self {
         Self {
@@ -69,12 +69,9 @@ impl DependencyGraphBuilder {
 
         self.generation
     }
-    pub(crate) fn calculate_transaction_interactions(
+    pub fn calculate_transaction_interactions(
         self,
-    ) -> (
-        HashMap<(usize, usize), (bool, Vec<(usize, bool)>)>,
-        BTreeMap<usize, Transaction>,
-    ) {
+    ) -> Batch {
         let Self {
             access_set,
             transactions,
@@ -88,7 +85,7 @@ impl DependencyGraphBuilder {
                 (k, (b.load(Ordering::Acquire), v.into_inner()))
             })
             .collect();
-        let mut transactions: BTreeMap<usize, Transaction> = transactions.into_iter().collect();
+        let mut transactions:  BTreeMap<usize, Transaction> = transactions.into_iter().collect();
         // intersect_set is specifically only the set of transactions who overlap in write set in
         // some way.
         transactions.par_iter_mut().for_each(|(_, f)| {
@@ -110,7 +107,7 @@ impl DependencyGraphBuilder {
             }
             f.intersect_set.sort_unstable();
         });
-        (access_set, transactions)
+        Batch { access_set, transactions }
     }
 }
 
@@ -136,8 +133,8 @@ impl Partition {
             txn_nos: Vec::new(),
         }
     }
-    pub fn transactions_mut(&mut self) -> &mut [Transaction] {
-        &mut self.transactions
+    pub fn consume(self) -> Vec<Transaction> {
+        self.transactions
     }
     pub fn add(&mut self, txn: Transaction) {
         // println!("add {}: WRITE {}", txn.no(), txn.write_set.to_string());
@@ -193,12 +190,35 @@ impl Partition {
 }
 
 #[derive(Debug)]
+pub struct Batch {
+    access_set: HashMap<(usize, usize), (bool, Vec<(usize, bool)>)>,
+    transactions: BTreeMap<usize, Transaction>,
+}
+
+#[derive(Debug)]
 pub struct PartitionDispatcher {
     access_set: HashMap<(usize, usize), (bool, Vec<(usize, bool)>)>,
     transactions: BTreeMap<usize, Transaction>,
     defer_set: BTreeMap<usize, Transaction>,
 }
 impl PartitionDispatcher {
+    pub fn new() -> Self {
+        Self {
+            access_set: HashMap::new(),
+            transactions: BTreeMap::new(),
+            defer_set: BTreeMap::new()
+        }
+    }
+    pub fn install_batch(
+        &mut self,
+        batch: Batch
+    ) {
+        assert!(self.batch_done());
+        let Batch { access_set, transactions } = batch;
+        self.access_set = access_set;
+        self.transactions = transactions;
+    }
+
     pub fn batch_done(
         &self
     ) -> bool {
@@ -210,9 +230,9 @@ impl PartitionDispatcher {
         assert!(self.transactions.is_empty());
         std::mem::swap(&mut self.transactions, &mut self.defer_set);
     }
-    pub fn dispatch_one_round(
+    pub fn dispatch_one_round<F: Fn(Partition) -> ()>(
         &mut self,
-        injector: Arc<Injector<Partition>>,
+        submit: F,
         partition_limits: &PartitionLimits,
     ) {
         let mut p = Partition::empty();
@@ -243,7 +263,7 @@ impl PartitionDispatcher {
             }
             // no more transactions to add
             let p2 = std::mem::replace(&mut p, Partition::empty());
-            injector.push(p2);
+            submit(p2);
             i = 0;
         }
     }
