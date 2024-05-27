@@ -1,7 +1,7 @@
 // can't do a simple enum-as-Ty, since such a type is infinitely recursive
 
-use std::fmt::{Debug, Formatter};
 use orrery_wire::{Cond, RowLocator, SSA};
+use std::fmt::{Debug, Formatter};
 use std::mem::ManuallyDrop;
 
 union RtValue {

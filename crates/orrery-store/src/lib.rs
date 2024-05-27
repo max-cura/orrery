@@ -10,13 +10,13 @@ mod sched;
 mod sets;
 mod work;
 
+use crate::op::{DatabaseContext, ResolvedTransaction};
 use crate::sched::TransactionFinishedInner;
 use crate::sets::AccessSet;
 use std::cell::UnsafeCell;
 use std::collections::BTreeMap;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::sync::Arc;
-use crate::op::ResolvedTransaction;
 
 struct TableSet {}
 impl TableSet {
@@ -69,3 +69,12 @@ impl Transaction {
 #[derive(Debug)]
 pub enum ExecutionError {}
 type ExecutionResult = Result<Vec<u8>, ExecutionError>;
+
+/// VERY DEEPLY UNSAFE
+struct Storage {}
+unsafe impl Sync for Storage {}
+impl Storage {
+    pub fn apply(&self, dc: DatabaseContext) {
+        unimplemented!()
+    }
+}

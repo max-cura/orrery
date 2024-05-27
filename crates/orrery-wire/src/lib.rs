@@ -24,7 +24,7 @@ pub enum Op {
     Insert(RowLocator, usize),
     Cond(Cond),
     Jump(usize),
-    Value(/* todo */)
+    Value(/* todo */),
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionIR {

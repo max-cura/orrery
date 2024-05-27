@@ -69,9 +69,7 @@ impl DependencyGraphBuilder {
 
         self.generation
     }
-    pub fn calculate_transaction_interactions(
-        self,
-    ) -> Batch {
+    pub fn calculate_transaction_interactions(self) -> Batch {
         let Self {
             access_set,
             transactions,
@@ -85,7 +83,7 @@ impl DependencyGraphBuilder {
                 (k, (b.load(Ordering::Acquire), v.into_inner()))
             })
             .collect();
-        let mut transactions:  BTreeMap<usize, Transaction> = transactions.into_iter().collect();
+        let mut transactions: BTreeMap<usize, Transaction> = transactions.into_iter().collect();
         // intersect_set is specifically only the set of transactions who overlap in write set in
         // some way.
         transactions.par_iter_mut().for_each(|(_, f)| {
@@ -107,7 +105,10 @@ impl DependencyGraphBuilder {
             }
             f.intersect_set.sort_unstable();
         });
-        Batch { access_set, transactions }
+        Batch {
+            access_set,
+            transactions,
+        }
     }
 }
 
@@ -133,8 +134,8 @@ impl Partition {
             txn_nos: Vec::new(),
         }
     }
-    pub fn consume(self) -> Vec<Transaction> {
-        self.transactions
+    pub fn transactions_mut(&mut self) -> &mut [Transaction] {
+        &mut self.transactions
     }
     pub fn add(&mut self, txn: Transaction) {
         // println!("add {}: WRITE {}", txn.no(), txn.write_set.to_string());
@@ -206,27 +207,23 @@ impl PartitionDispatcher {
         Self {
             access_set: HashMap::new(),
             transactions: BTreeMap::new(),
-            defer_set: BTreeMap::new()
+            defer_set: BTreeMap::new(),
         }
     }
-    pub fn install_batch(
-        &mut self,
-        batch: Batch
-    ) {
+    pub fn install_batch(&mut self, batch: Batch) {
         assert!(self.batch_done());
-        let Batch { access_set, transactions } = batch;
+        let Batch {
+            access_set,
+            transactions,
+        } = batch;
         self.access_set = access_set;
         self.transactions = transactions;
     }
 
-    pub fn batch_done(
-        &self
-    ) -> bool {
+    pub fn batch_done(&self) -> bool {
         self.transactions.is_empty() && self.defer_set.is_empty()
     }
-    pub fn load_deferred(
-        &mut self,
-    ) {
+    pub fn load_deferred(&mut self) {
         assert!(self.transactions.is_empty());
         std::mem::swap(&mut self.transactions, &mut self.defer_set);
     }

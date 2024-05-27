@@ -1,40 +1,32 @@
-use std::collections::VecDeque;
-use std::sync::{Arc, Barrier};
-use std::sync::atomic::{AtomicBool, Ordering};
-use crossbeam::deque::{Injector, Steal};
-use rayon::{ThreadPool, ThreadPoolBuilder, ThreadPoolBuildError};
 use crate::op::DatabaseContext;
 use crate::partition::{Batch, Partition, PartitionDispatcher, PartitionLimits};
+use crate::Storage;
+use crossbeam::deque::{Injector, Steal};
+use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
 
-/// VERY DEEPLY UNSAFE
-struct Storage {
-
-}
-unsafe impl Sync for Storage {}
-impl Storage {
-    pub fn apply(&self, dc: DatabaseContext) {
-        unimplemented!()
-    }
-}
-
+/// Used internally for partition dispatch
 struct PartitionTask {
     partition: Partition,
     storage: Arc<Storage>,
 }
 
-pub struct WorkPool {
+/// Pool of workers threads used to run transactions.
+pub struct Herd {
     worker_count: usize,
+
     batch_queue: parking_lot::Mutex<VecDeque<Batch>>,
+    batch_queue_cv: parking_lot::Condvar,
+
     injector: Arc<Injector<PartitionTask>>,
     herd_control: Arc<HerdControl>,
-    thread_pool: ThreadPool
+    thread_pool: ThreadPool,
 }
-
-impl WorkPool {
+impl Herd {
     pub fn new(worker_count: usize) -> Result<Self, ThreadPoolBuildError> {
-        let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(worker_count)
-            .build()?;
+        let thread_pool = ThreadPoolBuilder::new().num_threads(worker_count).build()?;
         let injector = Arc::new(Injector::new());
         let herd_control = Arc::new(HerdControl::new(worker_count));
         let i2 = Arc::clone(&injector);
@@ -49,9 +41,10 @@ impl WorkPool {
         Ok(Self {
             worker_count,
             batch_queue: parking_lot::Mutex::new(VecDeque::new()),
+            batch_queue_cv: parking_lot::Condvar::new(),
             injector,
             herd_control,
-            thread_pool
+            thread_pool,
         })
     }
 
@@ -71,12 +64,12 @@ impl WorkPool {
         loop {
             let batch = {
                 let mut queue = self.batch_queue.lock();
-                queue.pop_front()
+                if queue.is_empty() {
+                    self.batch_queue_cv.wait(&mut queue);
+                }
+                queue.pop_front().unwrap()
             };
-            let Some(batch) = batch else {
-                std::thread::yield_now();
-                continue
-            };
+            // run the dispatcher
             partition_dispatcher.install_batch(batch);
             while !partition_dispatcher.batch_done() {
                 self.herd_control.start_new_batch();
@@ -86,27 +79,17 @@ impl WorkPool {
         }
     }
 
-    pub fn install(&self, batch: Batch) {
-        let mut queue = self.batch_queue.lock();
-        queue.push_back(batch);
+    /// Send a batch of partitions on the Herd.
+    pub fn enqueue_batch(&self, batch: Batch) {
+        {
+            let mut queue = self.batch_queue.lock();
+            queue.push_back(batch);
+        }
+        self.batch_queue_cv.notify_one();
     }
 }
 
-fn run_partition(
-    mut partition: Partition,
-    storage: Arc<Storage>,
-) {
-    let transactions = partition.consume();
-    let mut db_ctx = DatabaseContext::new();
-    for txn in transactions {
-        /* TODO: execute the transaction on `db_ctx` with `storage` as the backing store */
-        let result = Ok(vec![]);
-
-        txn.finished.unwrap().finish(result)
-    }
-    storage.apply(db_ctx);
-}
-
+/// Used internally to coordinate a herd of workers.
 struct HerdControl {
     batch_dispatch_finished: AtomicBool,
     wait_for_workers_to_finish: Barrier,
@@ -115,7 +98,8 @@ struct HerdControl {
     workers_finished_cv: parking_lot::Condvar,
 }
 impl HerdControl {
-    pub fn new(worker_count: usize) -> Self {
+    /// Create a new [`HerdControl`] with the specified worker count.
+    fn new(worker_count: usize) -> Self {
         Self {
             batch_dispatch_finished: AtomicBool::new(false),
             wait_for_workers_to_finish: Barrier::new(worker_count),
@@ -124,11 +108,21 @@ impl HerdControl {
             workers_finished_cv: parking_lot::Condvar::new(),
         }
     }
-    pub fn start_new_batch(&self) {
+
+    /// Used by the herd controller, along with [`wait_for_workers_finished`], to drive the
+    /// two-phase batch stepping.
+    ///
+    /// Wakes the herd, and tells them to start polling the injector.
+    fn start_new_batch(&self) {
         self.batch_dispatch_finished.store(false, Ordering::SeqCst);
         self.new_batch.wait();
     }
-    pub fn wait_for_workers_finished(&self) {
+    /// Used by the herd controller, along with [`start_new_batch`] to drive the two-phase batch
+    /// stepping.
+    ///
+    /// Indicates to the herd that no new tasks will be injected, and sleeps the thread until all
+    /// tasks in the injector are completed.
+    fn wait_for_workers_finished(&self) {
         self.batch_dispatch_finished.store(true, Ordering::SeqCst);
         let mut g = self.workers_finished.lock();
         if !*g {
@@ -137,7 +131,11 @@ impl HerdControl {
         }
     }
 
-    pub fn workers_finished(&self) {
+    /// Called by a single worker exactly once when both conditions are true:
+    ///     - all workers in the herd have received the batch have received the batch finished
+    ///       notification
+    ///     - the injection queue is empty
+    fn workers_finished(&self) {
         let mut g = self.workers_finished.lock();
         *g = true;
         self.workers_finished_cv.notify_one();
@@ -148,29 +146,50 @@ struct Worker {
     herd_control: Arc<HerdControl>,
     injector: Arc<Injector<PartitionTask>>,
 }
-
 impl Worker {
-    fn run_partition(&mut self, _partition: PartitionTask) {
-        unimplemented!()
+    fn run_partition(&mut self, mut partition: PartitionTask) {
+        let mut db_ctx = DatabaseContext::new();
+        for txn in partition.partition.transactions_mut() {
+            /* TODO: execute the transaction on `db_ctx` with `storage` as the backing store */
+            let result = Ok(vec![]);
+
+            txn.finished.take().unwrap().finish(result)
+        }
+        partition.storage.apply(db_ctx);
+    }
+
+    fn run_available_partitions(&mut self) {
+        loop {
+            match self.injector.steal() {
+                Steal::Empty => break,
+                Steal::Retry => continue,
+                Steal::Success(partition) => {
+                    self.run_partition(partition);
+                }
+            }
+        }
     }
 
     fn run(&mut self) {
         loop {
-            if self.herd_control.batch_dispatch_finished.load(Ordering::SeqCst) {
-                if self.herd_control.wait_for_workers_to_finish.wait().is_leader() {
+            self.run_available_partitions();
+            if self
+                .herd_control
+                .batch_dispatch_finished
+                .load(Ordering::SeqCst)
+            {
+                // batch_dispatch_finished only means that no new partitions will be injected; we
+                // still have to clear the queue
+                self.run_available_partitions();
+                if self
+                    .herd_control
+                    .wait_for_workers_to_finish
+                    .wait()
+                    .is_leader()
+                {
                     self.herd_control.workers_finished();
                 }
                 self.herd_control.new_batch.wait();
-            }
-
-            loop {
-                match self.injector.steal() {
-                    Steal::Empty => break,
-                    Steal::Retry => continue,
-                    Steal::Success(partition) => {
-                        self.run_partition(partition);
-                    }
-                }
             }
         }
     }
