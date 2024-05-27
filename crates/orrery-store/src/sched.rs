@@ -1,4 +1,4 @@
-use crate::partition::DependencyGraphBuilder;
+use crate::partition::{Batch, DependencyGraphBuilder};
 use crate::Transaction;
 use arc_swap::ArcSwap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,10 +58,10 @@ impl Threshold for FixedConfigThreshold {
     }
 }
 
-pub struct TransactionScheduler<TH: Threshold> {
+pub struct TransactionScheduler<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> {
     dependency_graph_builder: ArcSwap<DependencyGraphBuilder>,
     threshold: TH,
-    pipe: UnboundedSender<DependencyGraphBuilder>,
+    pipe: F,
     // 2n = n'th generation
     // 2n+1 = waiting to update to n+1'th generation
     generation: AtomicU64,
@@ -69,10 +69,10 @@ pub struct TransactionScheduler<TH: Threshold> {
     last_flush: parking_lot::Mutex<Instant>,
 }
 
-pub fn new_with_watchdog<TH: Threshold + 'static>(
+pub fn new_with_watchdog<TH: Threshold + 'static, F: Fn(Batch) -> () + Send + Sync + 'static>(
     threshold: TH,
-    pipe: UnboundedSender<DependencyGraphBuilder>,
-) -> Arc<TransactionScheduler<TH>> {
+    pipe: F,
+) -> Arc<TransactionScheduler<TH, F>> {
     let max_flush_interval = threshold.max_flush_interval();
 
     let (ts, mut flush_receiver) = TransactionScheduler::new(threshold, pipe);
@@ -107,13 +107,10 @@ pub fn new_with_watchdog<TH: Threshold + 'static>(
     ts_arc
 }
 
-impl<TH: Threshold> TransactionScheduler<TH> {
+impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionScheduler<TH, F> {
     /// Do not call this function directly. Use [`sched::new_with_watchdog`](new_with_watchdog)
     /// instead.
-    fn new(
-        threshold: TH,
-        pipe: UnboundedSender<DependencyGraphBuilder>,
-    ) -> (Self, UnboundedReceiver<Instant>) {
+    fn new(threshold: TH, pipe: F) -> (Self, UnboundedReceiver<Instant>) {
         let (flush_sender, flush_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         (
@@ -153,7 +150,7 @@ impl<TH: Threshold> TransactionScheduler<TH> {
         // once `old` is the only reference, we can call Arc::into_inner on it and send it down the
         // pipe
         let dg = Arc::into_inner(old).unwrap();
-        self.pipe.send(dg).expect("failed to pipe dependency graph");
+        (self.pipe)(dg.into_batch());
     }
 
     fn flush(&self, flush_gen: u64) -> bool {

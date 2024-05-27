@@ -69,7 +69,7 @@ impl DependencyGraphBuilder {
 
         self.generation
     }
-    pub fn calculate_transaction_interactions(self) -> Batch {
+    pub fn into_batch(self) -> Batch {
         let Self {
             access_set,
             transactions,
