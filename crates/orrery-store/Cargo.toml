@@ -9,14 +9,16 @@ debug = true
 [dependencies]
 proc-bitfield = "0.4.0"
 slice-dst = "1.5.1"
+
 rayon = "1.10.0"
 crossbeam = "0.8.4"
 dashmap = "5.5.3"
 parking_lot = "0.12.3"
+arc-swap = "1.7.1"
+tokio = { version = "1.37.0", features = ["sync", "rt", "rt-multi-thread", "time"] }
+
 rand = "0.9.0-alpha.1"
 rand_chacha = "0.9.0-alpha.1"
-tokio = { version = "1.37.0", features = ["sync", "rt", "rt-multi-thread", "time"] }
-arc-swap = "1.7.1"
 serde = { version = "1.0.203", features = ["derive"] }
 
 orrery-wire = { path = "../orrery-wire" }

@@ -1,5 +1,5 @@
-use crate::op::DatabaseContext;
 use crate::partition::{Batch, Partition, PartitionDispatcher, PartitionLimits};
+use crate::transaction::WriteCache;
 use crate::Storage;
 use crossbeam::deque::{Injector, Steal};
 use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
@@ -31,7 +31,7 @@ impl Herd {
         let herd_control = Arc::new(HerdControl::new(worker_count));
         let i2 = Arc::clone(&injector);
         let h2 = Arc::clone(&herd_control);
-        thread_pool.spawn_broadcast(move |ctx| {
+        thread_pool.spawn_broadcast(move |_ctx| {
             let mut worker = Worker {
                 herd_control: Arc::clone(&h2),
                 injector: Arc::clone(&i2),
@@ -148,12 +148,13 @@ struct Worker {
 }
 impl Worker {
     fn run_partition(&mut self, mut partition: PartitionTask) {
-        let mut db_ctx = DatabaseContext::new();
         for txn in partition.partition.transactions_mut() {
-            let result = txn.execute(&mut db_ctx, &partition.storage);
-            txn.finished.take().unwrap().finish(result);
+            let mut write_cache = WriteCache::new();
+            let result = txn.execute(&mut write_cache, &partition.storage);
+            if result.is_ok() {
+                partition.storage.apply(write_cache);
+            }
         }
-        partition.storage.apply(db_ctx);
     }
 
     fn run_available_partitions(&mut self) {

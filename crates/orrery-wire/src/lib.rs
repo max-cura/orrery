@@ -11,6 +11,12 @@ pub struct Cond {
     pub then_branch: usize,
     pub else_branch: usize,
 }
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct Phi {
+    pub cond: usize,
+    pub then_value: usize,
+    pub else_value: usize,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowLocator {
     pub table: String,
@@ -22,9 +28,16 @@ pub enum Op {
     Read(RowLocator),
     Update(RowLocator, usize),
     Insert(RowLocator, usize),
+    Put(RowLocator, usize),
+    Delete(RowLocator),
     Cond(Cond),
+    Phi(Phi),
     Jump(usize),
-    Value(/* todo */),
+    Const(/* todo */),
+    Arg(usize),
+    Return(usize),
+    Abort,
+    Commit(usize),
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionIR {
