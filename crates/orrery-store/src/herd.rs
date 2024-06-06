@@ -1,4 +1,5 @@
 use crate::partition::{Batch, Partition, PartitionDispatcher, PartitionLimits};
+use crate::sched::TransactionFinishedInner;
 use crate::transaction::WriteCache;
 use crate::Storage;
 use crossbeam::deque::{Injector, Steal};
@@ -155,6 +156,9 @@ impl Worker {
                 unsafe {
                     partition.storage.apply(write_cache);
                 }
+            }
+            if let Some(fin) = txn.get_finished() {
+                TransactionFinishedInner::finish(fin, result)
             }
         }
     }

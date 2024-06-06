@@ -1,5 +1,5 @@
 use crate::sets::AccessSet;
-use crate::Transaction;
+use crate::transaction::Transaction;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use parking_lot::Mutex;

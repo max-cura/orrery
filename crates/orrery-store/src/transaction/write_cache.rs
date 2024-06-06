@@ -2,7 +2,6 @@
 
 use crate::{DeleteError, InsertError, PutError, ReadError, Storage, UpdateError};
 use orrery_wire::Object;
-use std::io::Read;
 
 trait UpdateSemanticsError: Sized {
     fn deleted() -> Self;

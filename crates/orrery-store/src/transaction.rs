@@ -1,6 +1,12 @@
 // can't do a simple enum-as-Ty, since such a type is infinitely recursive
 
 mod write_cache;
+
+use crate::sched::TransactionFinishedInner;
+use crate::sets::AccessSet;
+use crate::{ExecutionError, ExecutionResult, ExecutionSuccess, Storage};
+use orrery_wire::{serialize_object_set, Object, TransactionIR};
+use std::sync::Arc;
 pub use write_cache::{CacheValue, DirtyKeyValue, WriteCache};
 
 struct TypeStore {
@@ -298,3 +304,86 @@ pub enum ResolvedOp {
 //         }
 //     }
 // }
+
+#[derive(Debug)]
+pub struct Transaction {
+    pub(crate) readonly_set: AccessSet,
+    pub(crate) write_set: AccessSet,
+    pub(crate) intersect_set: Vec<usize>,
+    number: usize,
+    finished: Option<Arc<TransactionFinishedInner>>,
+    ir: TransactionIR,
+    resolved: Vec<ResolvedOp>,
+    input_objects: Vec<Object>,
+}
+impl Transaction {
+    pub fn no(&self) -> usize {
+        self.number
+    }
+    pub fn set_finished(&mut self, signal: Arc<TransactionFinishedInner>) {
+        self.finished = Some(signal);
+    }
+    pub fn get_finished(&mut self) -> Option<Arc<TransactionFinishedInner>> {
+        self.finished.take()
+    }
+    fn input_object(&self, idx: usize) -> Result<&Object, ExecutionError> {
+        self.input_objects
+            .get(idx)
+            .ok_or(ExecutionError::InputOutOfRange)
+    }
+    pub fn execute(&mut self, db_ctx: &mut WriteCache, storage: &Storage) -> ExecutionResult {
+        let mut results = vec![];
+        let items = std::mem::replace(&mut self.resolved, Vec::new());
+        for op in items {
+            match op {
+                ResolvedOp::Read { table_ref } => {
+                    results.push(
+                        db_ctx
+                            .read(table_ref, storage)
+                            .map_err(ExecutionError::ReadError)?,
+                    );
+                }
+                ResolvedOp::Update { table_ref, value } => {
+                    db_ctx
+                        .update(table_ref, self.input_object(value)?, storage)
+                        .map_err(ExecutionError::UpdateError)?;
+                }
+                ResolvedOp::UpdateConditional {
+                    table_ref,
+                    value,
+                    expect,
+                } => {
+                    if !db_ctx
+                        .update_conditional(
+                            table_ref,
+                            self.input_object(value)?,
+                            self.input_object(expect)?,
+                            storage,
+                        )
+                        .map_err(ExecutionError::UpdateError)?
+                    {
+                        return Err(ExecutionError::PreconditionFailed);
+                    }
+                }
+                ResolvedOp::Insert { table_ref, value } => {
+                    db_ctx
+                        .insert(table_ref, self.input_object(value)?, storage)
+                        .map_err(ExecutionError::InsertError)?;
+                }
+                ResolvedOp::Put { table_ref, value } => {
+                    db_ctx
+                        .put(table_ref, self.input_object(value)?, storage)
+                        .map_err(ExecutionError::PutError)?;
+                }
+                ResolvedOp::Delete { table_ref } => {
+                    db_ctx
+                        .delete(table_ref, storage)
+                        .map_err(ExecutionError::DeleteError)?;
+                }
+            }
+        }
+        serialize_object_set(&results)
+            .map_err(ExecutionError::Serialization)
+            .map(|returned_values| ExecutionSuccess { returned_values })
+    }
+}

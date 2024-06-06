@@ -1,5 +1,4 @@
 use crate::partition::{Batch, DependencyGraphBuilder};
-use crate::Transaction;
 use arc_swap::ArcSwap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -9,6 +8,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 mod tx_finished;
+use crate::transaction::Transaction;
 pub use tx_finished::TransactionFinished;
 pub use tx_finished::TransactionFinishedInner;
 
@@ -191,7 +191,7 @@ impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionSched
 
     pub fn enqueue_transaction(&self, mut transaction: Transaction) -> TransactionFinished {
         let (future, signal) = TransactionFinished::new();
-        transaction.finished = Some(signal);
+        transaction.set_finished(signal);
 
         let (orig_gen, stats) = {
             let dg = self.dependency_graph_builder.load();
