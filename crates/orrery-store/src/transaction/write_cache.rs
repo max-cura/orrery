@@ -128,7 +128,7 @@ impl WriteCache {
                 Ok(())
             }
             None => {
-                if !storage.is_materialized(table_ref) {
+                if !storage.is_not_ephemeral(table_ref) {
                     self.cache_insert(table_ref, value, true);
                     Ok(())
                 } else {
@@ -175,7 +175,7 @@ impl WriteCache {
                 Ok(())
             }
             None => {
-                if storage.is_materialized(table_ref) {
+                if storage.is_not_ephemeral(table_ref) {
                     self.cache_insert(table_ref, value, true);
                     Ok(())
                 } else {
@@ -196,7 +196,7 @@ impl WriteCache {
         //  - row was previously deleted
         //  - row was never materialized
         // We check here that it was materialized, and
-        if storage.is_materialized(table_ref) {
+        if storage.is_not_ephemeral(table_ref) {
             self.cache_update(table_ref, CacheValue::Value(value.clone()), storage)
         } else {
             Err(UpdateError::InvalidRow)

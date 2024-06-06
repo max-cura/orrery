@@ -91,8 +91,8 @@ impl Table {
         self.id
     }
 
-    pub fn is_materialized(&self, row: usize) -> bool {
-        self.ephemerals.get(&row).map(|r| *r).unwrap_or(false)
+    pub fn is_not_ephemeral(&self, row: usize) -> bool {
+        self.ephemerals.get(&row).map(|r| *r).unwrap_or(true)
     }
 
     pub unsafe fn delete(&self, row: usize) {

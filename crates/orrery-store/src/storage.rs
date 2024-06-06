@@ -1,9 +1,10 @@
+/// The [`Storage`] struct orchestrates accesses to the underlying storage of the system.
+/// It is designed to be used via [`WriteCache`].
 use crate::table::{BackingRow, Table};
 use crate::transaction::{CacheValue, DirtyKeyValue, WriteCache};
 use crate::{DeleteError, InsertError, PutError, ReadError, UpdateError};
 use orrery_wire::{Object, RowLocator};
 
-/// SAFETY: SHEESH
 pub struct Storage {
     tables: Vec<Table>,
     table_names: Vec<String>,
@@ -20,11 +21,14 @@ impl Storage {
     }
 }
 
-// SAFETY: CALLED FROM WORKER ONLY
+// SAFETY:
+//  CALLED FROM WORKER ONLY
 impl Storage {
+    /// DO NOT USE
     unsafe fn delete_unchecked(&self, table_ref: (usize, usize)) {
         self.tables[table_ref.0].delete(table_ref.1);
     }
+    /// DO NOT USE
     unsafe fn put(&self, table_ref: (usize, usize), value: Object) {
         self.tables[table_ref.0].put(table_ref.1, value);
     }
@@ -36,11 +40,18 @@ impl Storage {
             }
         }
     }
+    /// SAFETY:
+    ///  This function only verifies that `table_ref` is materialized
+    ///
+    /// In particular, this means that this will panic if `table_ref` is completely out of range.
     pub unsafe fn read(&self, table_ref: (usize, usize)) -> Option<Object> {
         self.tables[table_ref.0].read(table_ref.1).ok()
     }
-    pub fn is_materialized(&self, table_ref: (usize, usize)) -> bool {
-        self.tables[table_ref.0].is_materialized(table_ref.1)
+
+    /// Note that this function only checks that `table_ref` is not ephemeral: it will return `true`
+    /// for e.g. table_refs that are out of range.
+    pub fn is_not_ephemeral(&self, table_ref: (usize, usize)) -> bool {
+        self.tables[table_ref.0].is_not_ephemeral(table_ref.1)
     }
 }
 
