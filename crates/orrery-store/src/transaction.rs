@@ -4,7 +4,8 @@ mod write_cache;
 
 use crate::sched::TransactionFinishedInner;
 use crate::sets::AccessSet;
-use crate::{ExecutionError, ExecutionResult, ExecutionSuccess, Storage};
+use crate::storage::Storage;
+use crate::{ExecutionError, ExecutionResult, ExecutionSuccess};
 use orrery_wire::{serialize_object_set, Object, TransactionIR};
 use std::sync::Arc;
 pub use write_cache::{CacheValue, DirtyKeyValue, WriteCache};

@@ -1,7 +1,7 @@
 use crate::partition::{Batch, Partition, PartitionDispatcher, PartitionLimits};
 use crate::sched::TransactionFinishedInner;
+use crate::storage::Storage;
 use crate::transaction::WriteCache;
-use crate::Storage;
 use crossbeam::deque::{Injector, Steal};
 use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 use std::collections::VecDeque;

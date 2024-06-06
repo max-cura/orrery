@@ -1,6 +1,7 @@
 //! [`WriteCache`] is the associated write buffer of a transaction.
 
-use crate::{DeleteError, InsertError, PutError, ReadError, Storage, UpdateError};
+use crate::storage::Storage;
+use crate::{DeleteError, InsertError, PutError, ReadError, UpdateError};
 use orrery_wire::Object;
 
 trait UpdateSemanticsError: Sized {
@@ -195,7 +196,7 @@ impl WriteCache {
         //  - row was previously deleted
         //  - row was never materialized
         // We check here that it was materialized, and
-        if storage.tables[table_ref.0].is_materialized(table_ref.1) {
+        if storage.is_materialized(table_ref) {
             self.cache_update(table_ref, CacheValue::Value(value.clone()), storage)
         } else {
             Err(UpdateError::InvalidRow)

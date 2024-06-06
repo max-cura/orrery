@@ -28,19 +28,22 @@ pub struct Table {
     ephemerals: DashMap<usize, bool>,
 }
 #[derive(Debug, Copy, Clone)]
-pub enum BackingRow {
-    Backed(usize),
-    Ephemeral(usize),
-}
+pub struct BackingRow(usize);
 impl BackingRow {
     pub fn dissolve(self) -> usize {
-        match self {
-            BackingRow::Backed(i) => i,
-            BackingRow::Ephemeral(i) => i,
-        }
+        self.0
     }
 }
 impl Table {
+    #[cfg(test)]
+    pub fn new_test() -> Self {
+        Self {
+            id: 0,
+            index: BTreeMap::new(),
+            backing_rows: vec![],
+            ephemerals: DashMap::new(),
+        }
+    }
     fn next_free_row(&mut self) -> Option<usize> {
         // FIXME: actual free list system
         None
@@ -65,11 +68,16 @@ impl Table {
         self.ephemerals.insert(i, false);
         i
     }
+    pub fn clear_ephemerals(&mut self) {
+        // FIXME: this is okay as long as we don't care about reusing candidates
+        //   at the moment this is a lovely memory leak.
+        self.ephemerals.clear();
+    }
     pub fn assure_backing_row(&mut self, key: &[u8]) -> BackingRow {
         let k = self.index.get(key);
         match k {
             None => {
-                let br = BackingRow::Ephemeral(self.materialize_ephemeral_index());
+                let br = BackingRow(self.materialize_ephemeral_index());
                 self.index.insert(key.to_vec(), br);
                 br
             }
