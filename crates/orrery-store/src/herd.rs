@@ -152,7 +152,9 @@ impl Worker {
             let mut write_cache = WriteCache::new();
             let result = txn.execute(&mut write_cache, &partition.storage);
             if result.is_ok() {
-                partition.storage.apply(write_cache);
+                unsafe {
+                    partition.storage.apply(write_cache);
+                }
             }
         }
     }

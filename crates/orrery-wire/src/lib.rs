@@ -24,20 +24,21 @@ pub struct RowLocator {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Op {
-    SSA(SSA),
+    // SSA(SSA),
     Read(RowLocator),
     Update(RowLocator, usize),
+    UpdateConditional(RowLocator, usize, usize),
     Insert(RowLocator, usize),
     Put(RowLocator, usize),
     Delete(RowLocator),
-    Cond(Cond),
-    Phi(Phi),
-    Jump(usize),
-    Const(/* todo */),
-    Arg(usize),
-    Return(usize),
-    Abort,
-    Commit(usize),
+    // Cond(Cond),
+    // Phi(Phi),
+    // Jump(usize),
+    // Const(/* todo */),
+    // Arg(usize),
+    // Return(usize),
+    // Abort,
+    // Commit(usize),
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionIR {
@@ -47,4 +48,23 @@ pub struct TransactionIR {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionRequest {
     pub ir: TransactionIR,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Object {
+    Unit,
+    Bool(bool),
+    UInt(u64),
+    Int(i64),
+    Float(f64),
+    String(String),
+    Bytes(Vec<u8>),
+    // List { item_ty: TySpec, items: Vec<Object> },
+    Tuple(Vec<Object>),
+    Option { inner: Option<Box<Object>> },
+    Func { ssa_begin: usize },
+}
+
+pub fn serialize_object_set(input: &[Object]) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(input)
 }

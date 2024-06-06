@@ -1,5 +1,29 @@
-use crate::transaction::Object;
+//! [`WriteCache`] is the associated write buffer of a transaction.
+
 use crate::{DeleteError, InsertError, PutError, ReadError, Storage, UpdateError};
+use orrery_wire::Object;
+use std::io::Read;
+
+trait UpdateSemanticsError: Sized {
+    fn deleted() -> Self;
+    fn invalid_row() -> Self;
+}
+impl UpdateSemanticsError for UpdateError {
+    fn deleted() -> Self {
+        Self::Deleted
+    }
+    fn invalid_row() -> Self {
+        Self::InvalidRow
+    }
+}
+impl UpdateSemanticsError for DeleteError {
+    fn deleted() -> Self {
+        Self::Deleted
+    }
+    fn invalid_row() -> Self {
+        Self::InvalidRow
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum CacheValue {
@@ -23,8 +47,8 @@ struct CacheMap {
 
 #[derive(Debug, Clone)]
 pub struct DirtyKeyValue {
-    table_ref: (usize, usize),
-    value: CacheValue,
+    pub table_ref: (usize, usize),
+    pub value: CacheValue,
 }
 
 /// Read-through, write-back cache used to run transactions. Provides rollback capability, since in
@@ -43,6 +67,7 @@ impl WriteCache {
         }
     }
 
+    /// Consumes `self` to create an iterator over all the items that are written to.
     pub fn into_dirty_iter(self) -> impl Iterator<Item = DirtyKeyValue> + 'static {
         let Self {
             access_cache,
@@ -63,104 +88,217 @@ impl WriteCache {
             })
     }
 
+    /// Insert a single item into the cache.
+    ///
+    /// Preconditions:
+    ///   - item must not already be in cache (this is not checked)
     #[inline]
     fn cache_insert(&mut self, table_ref: (usize, usize), value: CacheValue, dirty: bool) -> usize {
+        debug_assert!(!self.access_map.iter().any(|cm| cm.table_ref == table_ref));
         let i = self.access_cache.len();
         self.access_cache.push(value);
         self.access_map.push(CacheMap { table_ref, dirty });
         i
     }
+}
+
+impl WriteCache {
+    /// Perform a modification or insertion on the cache with UPDATE semantics.
+    ///
+    /// Preconditions:
+    ///   - item must not have been deleted
+    ///   - item must be fully materialized
     #[inline]
-    fn cache_put<F: FnOnce(Object) -> ()>(
+    fn cache_insert_exclusive(
         &mut self,
         table_ref: (usize, usize),
         value: CacheValue,
-        dtor: F,
-        force_dirty_if_not_present: bool,
-    ) {
+        storage: &Storage,
+    ) -> Result<(), InsertError> {
+        match self
+            .access_map
+            .iter()
+            .rposition(|tr| tr.table_ref == table_ref)
+        {
+            Some(cache_idx) => {
+                if !matches!(self.access_cache[cache_idx], CacheValue::Deleted) {
+                    return Err(InsertError::RowExists);
+                }
+                self.access_cache[cache_idx] = value;
+                Ok(())
+            }
+            None => {
+                if !storage.is_materialized(table_ref) {
+                    self.cache_insert(table_ref, value, true);
+                    Ok(())
+                } else {
+                    Err(InsertError::RowExists)
+                }
+            }
+        }
+    }
+
+    /// Strict insert
+    pub fn insert(
+        &mut self,
+        table_ref: (usize, usize),
+        value: &Object,
+        storage: &Storage,
+    ) -> Result<(), InsertError> {
+        self.cache_insert_exclusive(table_ref, CacheValue::Value(value.clone()), storage)
+    }
+}
+
+impl WriteCache {
+    /// Perform a modification or insertion on the cache with UPDATE semantics.
+    ///
+    /// Preconditions:
+    ///   - item must not have been deleted
+    ///   - item must be fully materialized
+    #[inline]
+    fn cache_update<E: UpdateSemanticsError>(
+        &mut self,
+        table_ref: (usize, usize),
+        value: CacheValue,
+        storage: &Storage,
+    ) -> Result<(), E> {
+        match self
+            .access_map
+            .iter()
+            .rposition(|tr| tr.table_ref == table_ref)
+        {
+            Some(cache_idx) => {
+                if matches!(self.access_cache[cache_idx], CacheValue::Deleted) {
+                    return Err(E::deleted());
+                }
+                self.access_cache[cache_idx] = value;
+                Ok(())
+            }
+            None => {
+                if storage.is_materialized(table_ref) {
+                    self.cache_insert(table_ref, value, true);
+                    Ok(())
+                } else {
+                    // Strictly, could be either in this case...
+                    Err(E::invalid_row())
+                }
+            }
+        }
+    }
+    /// Strict Update
+    pub fn update(
+        &mut self,
+        table_ref: (usize, usize),
+        value: &Object,
+        storage: &Storage,
+    ) -> Result<(), UpdateError> {
+        // Update can fail if:
+        //  - row was previously deleted
+        //  - row was never materialized
+        // We check here that it was materialized, and
+        if storage.tables[table_ref.0].is_materialized(table_ref.1) {
+            self.cache_update(table_ref, CacheValue::Value(value.clone()), storage)
+        } else {
+            Err(UpdateError::InvalidRow)
+        }
+    }
+    pub fn update_conditional(
+        &mut self,
+        table_ref: (usize, usize),
+        value: &Object,
+        expect: &Object,
+        storage: &Storage,
+    ) -> Result<bool, UpdateError> {
+        let existing = self.cache_read(table_ref, storage).unwrap();
+        if &existing != expect {
+            return Ok(false);
+        } else {
+            self.cache_update(table_ref, CacheValue::Value(value.clone()), storage)?;
+            Ok(true)
+        }
+    }
+    /// Delete
+    pub fn delete(
+        &mut self,
+        table_ref: (usize, usize),
+        storage: &Storage,
+    ) -> Result<(), DeleteError> {
+        self.cache_update(table_ref, CacheValue::Deleted, storage)
+    }
+}
+
+impl WriteCache {
+    /// Set the value corresponding to `table_ref` in the cache to `value`.
+    #[inline]
+    fn cache_put(&mut self, table_ref: (usize, usize), value: CacheValue, _storage: &Storage) {
         match self
             .access_map
             .iter()
             .rposition(|tr| tr.table_ref == table_ref)
         {
             Some(i) => {
-                let prev = std::mem::replace(&mut self.access_cache[i], value);
-                if let CacheValue::Value(value) = prev {
-                    dtor(value);
-                }
+                let _ = std::mem::replace(&mut self.access_cache[i], value);
                 self.access_map[i].dirty = true;
             }
             None => {
-                self.cache_insert(table_ref, value, force_dirty_if_not_present);
+                self.cache_insert(table_ref, value, true);
             }
         }
     }
+    /// Upsert
+    pub fn put(
+        &mut self,
+        table_ref: (usize, usize),
+        value: &Object,
+        storage: &Storage,
+    ) -> Result<(), PutError> {
+        self.cache_put(table_ref, CacheValue::Value(value.clone()), storage);
+        Ok(())
+    }
+}
 
+impl WriteCache {
+    /// Succeeds if and only if:
+    ///   - row was not deleted by a prior transaction in the current partition
+    ///   - row was not deleted by a transaction in a prior round
+    ///   - row is fully materialized (i.e. not ephemeral)
+    #[inline]
+    fn cache_read(
+        &mut self,
+        table_ref: (usize, usize),
+        storage: &Storage,
+    ) -> Result<Object, ReadError> {
+        match self
+            .access_map
+            .iter()
+            .rposition(|tr| tr.table_ref == table_ref)
+        {
+            Some(cache_idx) => match &self.access_cache[cache_idx] {
+                CacheValue::Deleted => Err(ReadError::Deleted),
+                CacheValue::Value(v) => Ok(v.clone()),
+            },
+            None => {
+                let i = self.cache_insert(
+                    table_ref,
+                    CacheValue::Value(unsafe {
+                        storage
+                            .read(table_ref)
+                            // will be None if:
+                            //  deleted by partition in earlier round, or not yet materialized
+                            .ok_or(ReadError::InvalidRow)?
+                    }),
+                    false,
+                );
+                Ok(self.access_cache[i].as_value().unwrap().clone())
+            }
+        }
+    }
     /// (Consistent) Read
     pub fn read(
         &mut self,
         table_ref: (usize, usize),
         storage: &Storage,
-    ) -> Result<&Object, ReadError> {
-        let cache_idx = match self
-            .access_map
-            .iter()
-            .rposition(|tr| tr.table_ref == table_ref)
-        {
-            Some(i) => i,
-            None => self.cache_insert(
-                table_ref,
-                CacheValue::Value(storage.read(table_ref)?),
-                false,
-            ),
-        };
-        Ok(self.access_cache[cache_idx].as_value().unwrap())
-    }
-    /// Strict Update
-    pub fn update<F: FnOnce(Object) -> ()>(
-        &mut self,
-        table_ref: (usize, usize),
-        value: Object,
-        dtor: F,
-        storage: &Storage,
-    ) -> Result<(), UpdateError> {
-        storage.validate_key_update(table_ref)?;
-        self.cache_put(table_ref, CacheValue::Value(value), dtor, true);
-        Ok(())
-    }
-    /// Strict insert
-    pub fn insert(
-        &mut self,
-        table_ref: (usize, usize),
-        value: Object,
-        storage: &Storage,
-    ) -> Result<(), InsertError> {
-        assert!(!self.access_map.iter().any(|x| x.table_ref == table_ref));
-        storage.validate_key_insert(table_ref)?;
-        self.cache_insert(table_ref, CacheValue::Value(value), true);
-        Ok(())
-    }
-    /// Upsert
-    pub fn put<F: FnOnce(Object) -> ()>(
-        &mut self,
-        table_ref: (usize, usize),
-        value: Object,
-        dtor: F,
-        storage: &Storage,
-    ) -> Result<(), PutError> {
-        storage.validate_key_put(table_ref)?;
-        self.cache_put(table_ref, CacheValue::Value(value), dtor, true);
-        Ok(())
-    }
-    /// Delete
-    pub fn delete<F: FnOnce(Object) -> ()>(
-        &mut self,
-        table_ref: (usize, usize),
-        dtor: F,
-        storage: &Storage,
-    ) -> Result<(), DeleteError> {
-        storage.validate_key_delete(table_ref)?;
-        self.cache_put(table_ref, CacheValue::Deleted, dtor, true);
-        Ok(())
+    ) -> Result<Object, ReadError> {
+        self.cache_read(table_ref, storage)
     }
 }
