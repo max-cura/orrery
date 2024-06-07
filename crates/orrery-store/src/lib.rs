@@ -29,6 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 pub use storage::Storage;
 pub use table::Table;
+use thiserror::Error;
 pub use transaction::{ResolvedOp, Transaction};
 
 pub type DynPipe = Box<dyn Fn(Batch) + Send + Sync + 'static>;
@@ -182,57 +183,83 @@ pub fn prepare_query(
     ))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Error)]
 pub enum PreparationError {
+    #[error("")]
     Read(ReadError),
+    #[error("")]
     Update(UpdateError),
+    #[error("")]
     Insert(InsertError),
+    #[error("")]
     Delete(DeleteError),
+    #[error("")]
     Put(PutError),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Error)]
 pub enum ExecutionError {
+    #[error("")]
     InputOutOfRange,
+    #[error("")]
     Serialization(String),
+    #[error("")]
     ReadError(ReadError),
+    #[error("")]
     UpdateError(UpdateError),
+    #[error("")]
     PreconditionFailed,
+    #[error("")]
     InsertError(InsertError),
+    #[error("")]
     PutError(PutError),
+    #[error("")]
     DeleteError(DeleteError),
+    #[error("")]
     PreparationError(PreparationError),
 }
 #[derive(Debug)]
 pub struct ExecutionSuccess {
-    returned_values: Vec<u8>,
+    pub returned_values: Vec<u8>,
 }
 pub type ExecutionResult = Result<ExecutionSuccess, ExecutionError>;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Error)]
 pub enum ReadError {
+    #[error("")]
     InvalidTable,
+    #[error("")]
     InvalidRow,
+    #[error("")]
     Deleted,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Error)]
 pub enum UpdateError {
+    #[error("")]
     InvalidTable,
+    #[error("")]
     InvalidRow,
+    #[error("")]
     Deleted,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Error)]
 pub enum DeleteError {
+    #[error("")]
     InvalidTable,
+    #[error("")]
     InvalidRow,
+    #[error("")]
     Deleted,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Error)]
 pub enum InsertError {
+    #[error("")]
     InvalidTable,
+    #[error("")]
     RowExists,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Error)]
 pub enum PutError {
+    #[error("")]
     InvalidTable,
 }

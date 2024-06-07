@@ -1,12 +1,13 @@
-mod state;
-mod store;
+pub mod state;
+pub mod store;
 
 use openraft::storage::{RaftLogStorage, RaftStateMachine};
 use openraft::{OptionalSend, RaftLogId, RaftLogReader, RaftTypeConfig};
 use orrery_store::{ExecutionError, TransactionFinished};
 use orrery_wire::TransactionRequest;
-use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use serde::de::{Error, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt::{Debug, Formatter};
 use std::future::Future;
 use std::io::Cursor;
 use std::ops::RangeBounds;
@@ -16,9 +17,20 @@ pub struct Request {
     transaction: TransactionRequest,
 }
 
-#[derive(Debug)]
+// fn x() -> Option<Result<TransactionFinished, ExecutionError>> {}
+
+#[derive(Debug, Deserialize)]
 pub struct Response {
-    result: Option<Result<TransactionFinished, ExecutionError>>,
+    #[serde(skip, default)]
+    pub result: Option<Result<TransactionFinished, ExecutionError>>,
+}
+impl Serialize for Response {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_unit_struct("Response")
+    }
 }
 
 pub type NodeId = u64;
@@ -27,8 +39,6 @@ openraft::declare_raft_types!(
     pub TypeConfig:
         D = Request,
         R = Response,
-    // TODO: figure out snapshotting
-        // SnapshotData = (),
 );
 
 #[cfg(test)]

@@ -6,7 +6,8 @@
 use dashmap::DashSet;
 use orrery_store::PhaseController;
 
-mod raft;
+pub mod api;
+pub mod raft;
 
 /// The set of information that is necessary to upkeep the replicated system.
 pub struct State {
