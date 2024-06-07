@@ -1,12 +1,13 @@
 use crate::raft::{Response, TypeConfig};
 use crate::State;
-use dashmap::DashSet;
+use dashmap::{DashMap, DashSet};
 use openraft::storage::RaftStateMachine;
 use openraft::{
     EntryPayload, LogId, OptionalSend, RaftSnapshotBuilder, RaftTypeConfig, Snapshot, SnapshotMeta,
     StorageError, StorageIOError, StoredMembership,
 };
-use orrery_store::{Config, PhaseController, Storage};
+use orrery_store::{Config, ExecutionError, PhaseController, Storage, TransactionFinished};
+use orrery_wire::TransactionRequest;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::io::Cursor;
@@ -57,12 +58,12 @@ impl StateMachine {
 #[derive(Debug, Serialize)]
 struct SnapshotFrame<'a> {
     storage: &'a Storage,
-    outstanding_transactions: &'a DashSet<usize>,
+    outstanding_transactions: &'a DashMap<usize, TransactionRequest>,
 }
 #[derive(Debug, Deserialize)]
 struct SnapshotFrameDeser {
     storage: Storage,
-    outstanding_transactions: DashSet<usize>,
+    outstanding_transactions: DashMap<usize, TransactionRequest>,
 }
 impl RaftSnapshotBuilder<TypeConfig> for Arc<StateMachine> {
     async fn build_snapshot(
@@ -70,7 +71,10 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<StateMachine> {
     ) -> Result<Snapshot<TypeConfig>, StorageError<<TypeConfig as RaftTypeConfig>::NodeId>> {
         let sm = self.state_machine.read().await;
         let data = {
-            let pcis = sm.state.phase_controller.inner.storage.lock();
+            let mut pcis = sm.state.phase_controller.inner.storage.lock();
+            while sm.state.phase_controller.inner.flag.load(Ordering::SeqCst) {
+                sm.state.phase_controller.inner.cv.wait(&mut pcis);
+            }
             let snapshot_frame = SnapshotFrame {
                 storage: pcis.as_ref().unwrap(),
                 outstanding_transactions: &sm.state.outstanding_transactions,
@@ -145,10 +149,24 @@ impl RaftStateMachine<TypeConfig> for Arc<StateMachine> {
                 EntryPayload::Normal(request) => {
                     // NOTE add_transaction will block the network thread if interrupted by batch
                     // execution
-                    let finished = sm
+                    let finished = match sm
                         .state
                         .phase_controller
-                        .add_transaction(request.transaction);
+                        .add_transaction(request.transaction.clone())
+                    {
+                        Ok((number, mut finished)) => {
+                            // TODO: deduplication
+                            sm.state
+                                .outstanding_transactions
+                                .insert(number, request.transaction);
+                            let ot = Arc::clone(&sm.state.outstanding_transactions);
+                            finished.set_ext(Box::new(move || {
+                                ot.remove(&number);
+                            }));
+                            Ok(finished)
+                        }
+                        Err(e) => Err(e),
+                    };
                     responses.push(Response {
                         result: Some(finished),
                     })
@@ -204,7 +222,7 @@ impl RaftStateMachine<TypeConfig> for Arc<StateMachine> {
         };
         let updated_state_machine = Inner {
             state: State {
-                outstanding_transactions: outstanding_transactions,
+                outstanding_transactions: Arc::new(outstanding_transactions),
                 phase_controller: PhaseController::new(config, storage),
             },
             last_membership: meta.last_membership.clone(),

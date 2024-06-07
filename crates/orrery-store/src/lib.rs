@@ -46,8 +46,8 @@ pub struct Config {
 
 pub struct Inner {
     pub storage: Mutex<Option<Storage>>,
-    flag: AtomicBool,
-    cv: Condvar,
+    pub flag: AtomicBool,
+    pub cv: Condvar,
     herd: Herd,
     config: Config,
 }
@@ -94,9 +94,9 @@ impl PhaseController {
     pub fn add_transaction(
         &self,
         transaction_request: TransactionRequest,
-    ) -> Result<TransactionFinished, ExecutionError> {
+    ) -> Result<(usize, TransactionFinished), ExecutionError> {
         let mut storage = self.inner.storage.lock();
-        if self.inner.flag.load(Ordering::SeqCst) {
+        while self.inner.flag.load(Ordering::SeqCst) {
             self.inner.cv.wait(&mut storage);
         }
         let storage_mut = storage.as_mut().unwrap();
@@ -104,7 +104,7 @@ impl PhaseController {
         let tx = prepare_query(transaction_request, storage_mut, number)
             .map_err(ExecutionError::PreparationError)?;
         let finished = self.sched.enqueue_transaction(tx);
-        Ok(finished)
+        Ok((number, finished))
     }
 }
 

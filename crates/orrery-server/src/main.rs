@@ -3,15 +3,18 @@
 // }
 // pub mod raft;
 
-use dashmap::DashSet;
+use dashmap::DashMap;
 use orrery_store::PhaseController;
+use orrery_wire::TransactionRequest;
+use std::sync::Arc;
 
 pub mod api;
+mod client;
+mod network;
 pub mod raft;
 
-/// The set of information that is necessary to upkeep the replicated system.
 pub struct State {
-    outstanding_transactions: DashSet<usize>,
+    outstanding_transactions: Arc<DashMap<usize, TransactionRequest>>,
     phase_controller: PhaseController,
 }
 

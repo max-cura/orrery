@@ -1,15 +1,34 @@
 use crate::ExecutionResult;
+use std::fmt::{Debug, Formatter};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
-#[derive(Debug)]
 pub struct TransactionFinishedInner {
     value: parking_lot::Mutex<Option<ExecutionResult>>,
     finished: AtomicBool,
     waker: parking_lot::Mutex<Option<Waker>>,
+
+    ext: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send + 'static>>>,
+}
+impl Debug for TransactionFinishedInner {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransactionFinishedInner")
+            .field("value", &self.value)
+            .field("finished", &self.finished)
+            .field("waker", &self.waker)
+            .field(
+                "ext",
+                if self.ext.lock().is_some() {
+                    &"Some(<box FnOnce>)"
+                } else {
+                    &"None"
+                },
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -21,6 +40,7 @@ impl TransactionFinishedInner {
             value: parking_lot::Mutex::new(None),
             finished: AtomicBool::new(false),
             waker: parking_lot::Mutex::new(None),
+            ext: parking_lot::Mutex::new(None),
         }
     }
     pub fn finish(self: Arc<Self>, result: ExecutionResult) {
@@ -36,6 +56,10 @@ impl TransactionFinishedInner {
             }
         }
     }
+    pub fn set_ext(&self, ext: Box<dyn FnOnce() + Send + 'static>) {
+        let mut g = self.ext.lock();
+        *g = Some(ext);
+    }
 }
 
 impl TransactionFinished {
@@ -43,6 +67,9 @@ impl TransactionFinished {
         let arc = Arc::new(TransactionFinishedInner::new());
         let this = Self(Arc::clone(&arc));
         (this, arc)
+    }
+    pub fn set_ext(&mut self, ext: Box<dyn FnOnce() + Send + 'static>) {
+        self.0.set_ext(ext);
     }
 }
 
@@ -55,6 +82,9 @@ impl Future for TransactionFinished {
                 let mut guard = self.0.value.lock();
                 guard.take().unwrap()
             };
+            if let Some(ext) = (&mut self.0.ext.lock()).take() {
+                ext();
+            }
             Poll::Ready(value)
         } else {
             {
@@ -71,6 +101,9 @@ impl Future for TransactionFinished {
                     let mut guard = self.0.value.lock();
                     guard.take().unwrap()
                 };
+                if let Some(ext) = (&mut self.0.ext.lock()).take() {
+                    ext();
+                }
                 Poll::Ready(value)
             } else {
                 Poll::Pending
