@@ -1,17 +1,24 @@
-mod store;
 mod state;
+mod store;
 
+use openraft::storage::{RaftLogStorage, RaftStateMachine};
+use openraft::{OptionalSend, RaftLogId, RaftLogReader, RaftTypeConfig};
+use orrery_store::{ExecutionError, TransactionFinished};
+use orrery_wire::TransactionRequest;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::future::Future;
+use std::io::Cursor;
 use std::ops::RangeBounds;
-use openraft::{OptionalSend, RaftLogId, RaftLogReader, RaftTypeConfig};
-use openraft::storage::{RaftLogStorage, RaftStateMachine};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
-
+    transaction: TransactionRequest,
 }
-pub struct Response {
 
+#[derive(Debug)]
+pub struct Response {
+    result: Option<Result<TransactionFinished, ExecutionError>>,
 }
 
 pub type NodeId = u64;
@@ -24,4 +31,48 @@ openraft::declare_raft_types!(
         // SnapshotData = (),
 );
 
+#[cfg(test)]
+mod test {
+    use crate::raft::state::StateMachine;
+    use crate::raft::store::LogStorage;
+    use crate::raft::{NodeId, TypeConfig};
+    use openraft::testing::{StoreBuilder, Suite};
+    use openraft::StorageError;
+    use orrery_store::{Config, FixedConfigThreshold, PartitionLimits, Storage};
+    use std::sync::Arc;
+    use std::time::Duration;
 
+    struct MyStoreBuilder {}
+
+    impl StoreBuilder<TypeConfig, LogStorage<TypeConfig>, Arc<StateMachine>, ()> for MyStoreBuilder {
+        async fn build(
+            &self,
+        ) -> Result<((), LogStorage<TypeConfig>, Arc<StateMachine>), StorageError<NodeId>> {
+            Ok((
+                (),
+                LogStorage::default(),
+                Arc::new(StateMachine::new(
+                    Config {
+                        partition_limits: PartitionLimits {
+                            partition_max_write: 200,
+                            partition_max_access: 200,
+                        },
+                        fixed_config_threshold: FixedConfigThreshold {
+                            max_access_set_size: 3000,
+                            max_transaction_count: 3000,
+                            max_flush_interval: Duration::from_millis(10),
+                        },
+                        worker_count: 0,
+                    },
+                    Storage::new_test(),
+                )),
+            ))
+        }
+    }
+
+    #[test]
+    pub fn test() -> Result<(), StorageError<NodeId>> {
+        Suite::test_all(MyStoreBuilder {})?;
+        Ok(())
+    }
+}

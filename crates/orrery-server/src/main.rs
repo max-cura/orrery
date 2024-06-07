@@ -3,6 +3,17 @@
 // }
 // pub mod raft;
 
+use dashmap::DashSet;
+use orrery_store::PhaseController;
+
+mod raft;
+
+/// The set of information that is necessary to upkeep the replicated system.
+pub struct State {
+    outstanding_transactions: DashSet<usize>,
+    phase_controller: PhaseController,
+}
+
 fn main() {
     //
 }

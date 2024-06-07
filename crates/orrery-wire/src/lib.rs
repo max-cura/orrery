@@ -40,14 +40,14 @@ pub enum Op {
     // Abort,
     // Commit(usize),
 }
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TransactionIR {
-    pub ssa_items: Vec<Op>,
-}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionRequest {
-    pub ir: TransactionIR,
+    pub ir: Vec<Op>,
+    pub const_buf: Vec<Object>,
+
+    pub client_id: String,
+    pub tx_no: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

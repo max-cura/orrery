@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 pub struct RowSet {
     pub(crate) table: usize,
@@ -87,6 +89,28 @@ impl AccessSet {
 }
 
 impl AccessSet {
+    pub fn from_table_refs(trs: impl IntoIterator<Item = (usize, usize)>) -> Self {
+        let mut table_map = HashMap::new();
+        for (table, row) in trs {
+            if !table_map.contains_key(&table) {
+                table_map.insert(
+                    table,
+                    RowSet {
+                        table,
+                        rows: vec![row],
+                    },
+                );
+            } else {
+                table_map.get_mut(&table).unwrap().rows.push(row);
+            }
+        }
+        let mut v = Vec::from_iter(table_map.into_iter().map(|(_, rs)| rs));
+        v.sort_by_key(|rs| rs.table);
+        for rs in &mut v {
+            rs.rows.sort();
+        }
+        Self { row_sets: v }
+    }
     pub fn len(&self) -> usize {
         self.row_sets.iter().map(|rs| rs.rows.len()).sum()
     }

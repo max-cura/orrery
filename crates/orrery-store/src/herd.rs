@@ -50,44 +50,52 @@ impl Herd {
     }
 
     /// Should be run on its own thread
-    pub fn run_dispatcher(&self, storage: Arc<Storage>, partition_limits: PartitionLimits) {
+    pub fn run_dispatcher(
+        &self,
+        storage: Storage,
+        partition_limits: PartitionLimits,
+        batch: Batch,
+    ) -> Storage {
         let mut partition_dispatcher = PartitionDispatcher::new();
+        let arc_storage = Arc::new(storage);
         let submit = |partition: Partition| {
             self.injector.push(PartitionTask {
                 partition,
-                storage: Arc::clone(&storage),
+                storage: Arc::clone(&arc_storage),
             });
         };
 
         // park the workers until we can install a batch
         self.herd_control.wait_for_workers_finished();
 
-        loop {
-            let batch = {
-                let mut queue = self.batch_queue.lock();
-                if queue.is_empty() {
-                    self.batch_queue_cv.wait(&mut queue);
-                }
-                queue.pop_front().unwrap()
-            };
-            // run the dispatcher
-            partition_dispatcher.install_batch(batch);
-            while !partition_dispatcher.batch_done() {
-                self.herd_control.start_new_batch();
-                partition_dispatcher.dispatch_one_round(submit, &partition_limits);
-                self.herd_control.wait_for_workers_finished();
-            }
+        // loop {
+        // let batch = {
+        //     let mut queue = self.batch_queue.lock();
+        //     if queue.is_empty() {
+        //         self.batch_queue_cv.wait(&mut queue);
+        //     }
+        //     queue.pop_front().unwrap()
+        // };
+        // run the dispatcher
+        partition_dispatcher.install_batch(batch);
+        while !partition_dispatcher.batch_done() {
+            self.herd_control.start_new_batch();
+            partition_dispatcher.dispatch_one_round(submit, &partition_limits);
+            self.herd_control.wait_for_workers_finished();
         }
+        // }
+        Arc::into_inner(arc_storage)
+            .expect("Storage should have exactly 1 strong reference when workers are finished")
     }
-
-    /// Send a batch of partitions on the Herd.
-    pub fn enqueue_batch(&self, batch: Batch) {
-        {
-            let mut queue = self.batch_queue.lock();
-            queue.push_back(batch);
-        }
-        self.batch_queue_cv.notify_one();
-    }
+    //
+    // /// Send a batch of partitions on the Herd.
+    // pub fn enqueue_batch(&self, batch: Batch) {
+    //     {
+    //         let mut queue = self.batch_queue.lock();
+    //         queue.push_back(batch);
+    //     }
+    //     self.batch_queue_cv.notify_one();
+    // }
 }
 
 /// Used internally to coordinate a herd of workers.

@@ -112,9 +112,10 @@ impl DependencyGraphBuilder {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct PartitionLimits {
-    partition_max_write: usize,
-    partition_max_access: usize,
+    pub partition_max_write: usize,
+    pub partition_max_access: usize,
 }
 
 /// A set of values

@@ -12,6 +12,7 @@ pub struct TransactionFinishedInner {
     waker: parking_lot::Mutex<Option<Waker>>,
 }
 
+#[derive(Debug)]
 pub struct TransactionFinished(Arc<TransactionFinishedInner>);
 
 impl TransactionFinishedInner {

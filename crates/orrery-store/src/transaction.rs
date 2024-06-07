@@ -6,7 +6,7 @@ use crate::sched::TransactionFinishedInner;
 use crate::sets::AccessSet;
 use crate::storage::Storage;
 use crate::{ExecutionError, ExecutionResult, ExecutionSuccess};
-use orrery_wire::{serialize_object_set, Object, TransactionIR};
+use orrery_wire::{serialize_object_set, Object};
 use std::sync::Arc;
 pub use write_cache::{CacheValue, DirtyKeyValue, WriteCache};
 
@@ -313,11 +313,27 @@ pub struct Transaction {
     pub(crate) intersect_set: Vec<usize>,
     number: usize,
     finished: Option<Arc<TransactionFinishedInner>>,
-    ir: TransactionIR,
     resolved: Vec<ResolvedOp>,
     input_objects: Vec<Object>,
 }
 impl Transaction {
+    pub fn new(
+        readonly_set: AccessSet,
+        write_set: AccessSet,
+        number: usize,
+        resolved: Vec<ResolvedOp>,
+        input_objects: Vec<Object>,
+    ) -> Self {
+        Self {
+            readonly_set,
+            write_set,
+            intersect_set: vec![],
+            number,
+            finished: None,
+            resolved,
+            input_objects,
+        }
+    }
     pub fn no(&self) -> usize {
         self.number
     }
@@ -384,7 +400,7 @@ impl Transaction {
             }
         }
         serialize_object_set(&results)
-            .map_err(ExecutionError::Serialization)
+            .map_err(|e| ExecutionError::Serialization(e.to_string()))
             .map(|returned_values| ExecutionSuccess { returned_values })
     }
 }

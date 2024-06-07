@@ -2,29 +2,37 @@
 //! Changes:
 //!     - more performant `append()`, `truncate()`, and `purge()` methods.
 
+use openraft::storage::{LogFlushed, RaftLogStorage};
+use openraft::{
+    LogId, LogState, OptionalSend, RaftLogId, RaftLogReader, RaftTypeConfig, StorageError, Vote,
+};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::ops::RangeBounds;
 use std::sync::Arc;
-use openraft::{LogId, LogState, OptionalSend, RaftLogId, RaftLogReader, RaftTypeConfig, StorageError, Vote};
-use openraft::storage::{LogFlushed, RaftLogStorage};
 use tokio::sync::Mutex;
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct LogStorage<C: RaftTypeConfig>(Arc<Mutex<LogStorageInner<C>>>)
-    where C::Entry: Clone;
+where
+    C::Entry: Clone;
 
 impl<C: RaftTypeConfig> RaftLogReader<C> for LogStorage<C>
-    where C::Entry: Clone
+where
+    C::Entry: Clone,
 {
-    async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(&mut self, range: RB) -> Result<Vec<C::Entry>, StorageError<C::NodeId>> {
+    async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(
+        &mut self,
+        range: RB,
+    ) -> Result<Vec<C::Entry>, StorageError<C::NodeId>> {
         let mut l = self.0.lock().await;
         l.try_get_log_entries(range)
     }
 }
 
 impl<C: RaftTypeConfig> RaftLogStorage<C> for LogStorage<C>
-    where C::Entry: Clone
+where
+    C::Entry: Clone,
 {
     type LogReader = Self;
 
@@ -47,10 +55,14 @@ impl<C: RaftTypeConfig> RaftLogStorage<C> for LogStorage<C>
         l.read_vote()
     }
 
-    async fn append<I>(&mut self, entries: I, callback: LogFlushed<C>) -> Result<(), StorageError<C::NodeId>>
-        where
-            I: IntoIterator<Item=C::Entry> + OptionalSend,
-            I::IntoIter: OptionalSend
+    async fn append<I>(
+        &mut self,
+        entries: I,
+        callback: LogFlushed<C>,
+    ) -> Result<(), StorageError<C::NodeId>>
+    where
+        I: IntoIterator<Item = C::Entry> + OptionalSend,
+        I::IntoIter: OptionalSend,
     {
         let mut l = self.0.lock().await;
         l.append(entries, callback)
@@ -67,7 +79,7 @@ impl<C: RaftTypeConfig> RaftLogStorage<C> for LogStorage<C>
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct LogStorageInner<C: RaftTypeConfig> {
     last_purged_log_id: Option<LogId<C::NodeId>>,
     committed: Option<LogId<C::NodeId>>,
@@ -88,17 +100,28 @@ impl<C: RaftTypeConfig> Default for LogStorageInner<C> {
 }
 
 impl<C: RaftTypeConfig> LogStorageInner<C> {
-    fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(&mut self, range: RB)
-                                                                                      -> Result<Vec<C::Entry>, StorageError<C::NodeId>>
-        where C::Entry: Clone
+    fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(
+        &mut self,
+        range: RB,
+    ) -> Result<Vec<C::Entry>, StorageError<C::NodeId>>
+    where
+        C::Entry: Clone,
     {
         // TODO: may panic if range is bad
-        Ok(self.log.range(range.clone()).map(|x| x.1).cloned().collect())
+        Ok(self
+            .log
+            .range(range.clone())
+            .map(|x| x.1)
+            .cloned()
+            .collect())
     }
 
     fn get_log_state(&mut self) -> Result<LogState<C>, StorageError<C::NodeId>> {
         let last_purged_log_id = self.last_purged_log_id;
-        let last_log_id = self.log.last_key_value().map(|(_, e)| *e.get_log_id())
+        let last_log_id = self
+            .log
+            .last_key_value()
+            .map(|(_, e)| *e.get_log_id())
             .or(last_purged_log_id);
 
         Ok(LogState {
@@ -116,12 +139,20 @@ impl<C: RaftTypeConfig> LogStorageInner<C> {
         Ok(self.vote)
     }
 
-    fn append<I>(&mut self, entries: I, callback: LogFlushed<C>) -> Result<(), StorageError<C::NodeId>>
-        where
-            I: IntoIterator<Item=C::Entry> + OptionalSend,
-            I::IntoIter: OptionalSend
+    fn append<I>(
+        &mut self,
+        entries: I,
+        callback: LogFlushed<C>,
+    ) -> Result<(), StorageError<C::NodeId>>
+    where
+        I: IntoIterator<Item = C::Entry> + OptionalSend,
+        I::IntoIter: OptionalSend,
     {
-        self.log.extend(entries.into_iter().map(|entry| (entry.get_log_id().index, entry)));
+        self.log.extend(
+            entries
+                .into_iter()
+                .map(|entry| (entry.get_log_id().index, entry)),
+        );
         callback.log_io_completed(Ok(()));
         Ok(())
     }
@@ -136,13 +167,20 @@ impl<C: RaftTypeConfig> LogStorageInner<C> {
         assert!(last_purged <= Some(log_id));
         self.last_purged_log_id = Some(log_id);
 
-        if let Some(ref first_unpurged_idx) = self.log.range(..=log_id.index).next().map(|x| *x.0) {
-            self.log = self.log.split_off(first_unpurged_idx);
-        } else {
-            self.log.clear();
+        let keys = self
+            .log
+            .range(..=log_id.index)
+            .map(|(k, _)| *k)
+            .collect::<Vec<_>>();
+        for key in keys {
+            self.log.remove(&key);
         }
+        // if let Some(ref first_unpurged_idx) = self.log.range(..=log_id.index).next().map(|x| *x.0) {
+        //     self.log = self.log.split_off(first_unpurged_idx);
+        // } else {
+        //     self.log.clear();
+        // }
 
         Ok(())
     }
 }
-

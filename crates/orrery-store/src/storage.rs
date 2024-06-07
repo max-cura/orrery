@@ -4,20 +4,28 @@ use crate::table::{BackingRow, Table};
 use crate::transaction::{CacheValue, DirtyKeyValue, WriteCache};
 use crate::{DeleteError, InsertError, PutError, ReadError, UpdateError};
 use orrery_wire::{Object, RowLocator};
+use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Storage {
     tables: Vec<Table>,
     table_names: Vec<String>,
+    number: usize,
 }
 unsafe impl Sync for Storage {}
 
 impl Storage {
-    #[cfg(test)]
     pub fn new_test() -> Self {
         Self {
             tables: vec![Table::new_test()],
             table_names: vec!["g".to_string()],
+            number: 0,
         }
+    }
+    pub fn next_number(&mut self) -> usize {
+        let t = self.number;
+        self.number += 1;
+        t
     }
 }
 
