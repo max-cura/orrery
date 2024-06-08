@@ -34,56 +34,59 @@ async fn main() {
     const BLADE: usize = 10_000;
     const OPS: usize = 100;
 
-    let transaction_sets: Vec<Vec<TransactionRequest>> = (0..FANOUT)
-        .into_par_iter()
-        .map(|i| {
-            let mut set = vec![];
-            let cs = format!("c{i}");
-            for j in 0..BLADE {
-                let mut ir = vec![];
-                for _ in 0..OPS {
-                    let row = rand::thread_rng().gen_range(0..10000u64);
-                    ir.push(Op::Put(
-                        RowLocator::new("g", Vec::from_iter(row.to_le_bytes().into_iter())),
-                        0,
-                    ));
-                }
-                let tx = TransactionRequest {
-                    ir,
-                    const_buf: vec![Object::Int(i as i64)],
-                    client_id: cs.clone(),
-                    tx_no: j,
-                };
-            }
-            set
-        })
-        .collect();
-
     println!("Running transactions...");
 
-    let t1 = std::time::Instant::now();
-    let mut futures = JoinSet::new();
-    let mut ok_count = 0;
-    for set in transaction_sets.into_iter() {
-        let c = Arc::clone(&client);
-        futures.spawn(async move {
-            for tx in set {
-                let _ = c.execute(tx).await.unwrap();
-            }
-        });
-    }
-    while let Some(res) = futures.join_next().await {
-        res.unwrap();
-    }
-    let t2 = std::time::Instant::now();
+    let mut times = vec![];
+    for _ in 0..10 {
+        let transaction_sets: Vec<Vec<TransactionRequest>> = (0..FANOUT)
+            .into_par_iter()
+            .map(|i| {
+                let mut set = vec![];
+                let cs = format!("c{i}");
+                for j in 0..BLADE {
+                    let mut ir = vec![];
+                    for _ in 0..OPS {
+                        let row = rand::thread_rng().gen_range(0..10000u64);
+                        ir.push(Op::Put(
+                            RowLocator::new("g", Vec::from_iter(row.to_le_bytes().into_iter())),
+                            0,
+                        ));
+                    }
+                    let tx = TransactionRequest {
+                        ir,
+                        const_buf: vec![Object::Int(i as i64)],
+                        client_id: cs.clone(),
+                        tx_no: j,
+                    };
+                }
+                set
+            })
+            .collect();
+        let t1 = std::time::Instant::now();
+        let mut futures = JoinSet::new();
+        let mut ok_count = 0;
+        for set in transaction_sets.into_iter() {
+            let c = Arc::clone(&client);
+            futures.spawn(async move {
+                for tx in set {
+                    let _ = c.execute(tx).await.unwrap();
+                }
+            });
+        }
+        while let Some(res) = futures.join_next().await {
+            res.unwrap();
+        }
+        let t2 = std::time::Instant::now();
+        println!("Done");
+        println!();
 
-    println!("Done");
-    println!();
-
-    println!(
-        "Ran {}x{}PUT queries in time {:?}",
-        FANOUT * BLADE,
-        OPS,
-        t2 - t1
-    );
+        println!(
+            "Ran {}x{}PUT queries in time {:?}",
+            FANOUT * BLADE,
+            OPS,
+            t2 - t1
+        );
+        times.push(t2 - t1);
+    }
+    println!("Average: {:?}", times.iter().sum::<Duration>() / 10);
 }
