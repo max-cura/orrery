@@ -186,10 +186,12 @@ impl Partition {
             self.txn_nos.push(txn.no());
             self.transactions.push(txn);
 
-            let r = &mut self.write_set.row_sets[0].rows;
-            let l1 = r.len();
-            r.dedup();
-            assert_eq!(l1, r.len());
+            if !self.write_set.row_sets.is_empty() {
+                let r = &mut self.write_set.row_sets[0].rows;
+                let l1 = r.len();
+                r.dedup();
+                assert_eq!(l1, r.len());
+            }
             Ok(())
         } else {
             Err(txn)
