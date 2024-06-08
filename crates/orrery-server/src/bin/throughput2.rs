@@ -11,9 +11,10 @@ use tokio::task::JoinSet;
 #[tokio::main]
 async fn main() {
     let net_configs = vec![
-        (0, "127.0.0.1:23001"),
-        (1, "127.0.0.1:23002"),
-        (2, "127.0.0.1:23003"),
+        (0, "127.0.0.1:80"),
+        // (0, "127.0.0.1:23001"),
+        // (1, "127.0.0.1:23002"),
+        // (2, "127.0.0.1:23003"),
     ];
 
     tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -28,16 +29,14 @@ async fn main() {
     });
     let mut txno = || numbers.next().unwrap();
 
-    println!("Building transactions...");
-
     const FANOUT: usize = 200;
     const BLADE: usize = 10_000;
     const OPS: usize = 100;
 
-    println!("Running transactions...");
-
     let mut times = vec![];
     for _ in 0..10 {
+        println!("Building transactions...");
+
         let transaction_sets: Vec<Vec<TransactionRequest>> = (0..FANOUT)
             .into_par_iter()
             .map(|i| {
@@ -58,10 +57,13 @@ async fn main() {
                         client_id: cs.clone(),
                         tx_no: j,
                     };
+                    set.push(tx);
                 }
                 set
             })
             .collect();
+        println!("Running transactions...");
+
         let t1 = std::time::Instant::now();
         let mut futures = JoinSet::new();
         let mut ok_count = 0;
