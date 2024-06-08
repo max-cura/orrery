@@ -53,14 +53,21 @@ pub struct Inner {
 }
 impl Inner {
     fn submit(&self, batch: Batch) {
+        if batch.len() == 0 {
+            return;
+        }
+        tracing::info!("submit with batch size={}", batch.len());
         self.flag.store(true, Ordering::SeqCst);
         {
+            tracing::info!("locking storage... (state = {})", self.storage.is_locked());
             let mut storage = self.storage.lock();
             let s = storage.take().unwrap();
 
+            tracing::info!("running dispatcher");
             let new_storage = self
                 .herd
                 .run_dispatcher(s, self.config.partition_limits, batch);
+            tracing::info!("dispatch finished");
             let _ = storage.insert(new_storage);
         }
         self.flag.store(false, Ordering::SeqCst);
@@ -97,16 +104,22 @@ impl PhaseController {
         &self,
         transaction_request: TransactionRequest,
     ) -> Result<(usize, TransactionFinished), ExecutionError> {
-        let mut storage = self.inner.storage.lock();
-        while self.inner.flag.load(Ordering::SeqCst) {
-            self.inner.cv.wait(&mut storage);
+        tracing::info!("locking storage (add_transaction)");
+        let number;
+        let tx;
+        {
+            let mut storage = self.inner.storage.lock();
+            while self.inner.flag.load(Ordering::SeqCst) {
+                self.inner.cv.wait(&mut storage);
+            }
+            let storage_mut = storage.as_mut().unwrap();
+            number = storage_mut.next_number();
+            tx = prepare_query(transaction_request, storage_mut, number)
+                .map_err(ExecutionError::PreparationError)?;
+            tracing::info!("unlocking storage (add_transaction)");
         }
-        let storage_mut = storage.as_mut().unwrap();
-        let number = storage_mut.next_number();
-        let tx = prepare_query(transaction_request, storage_mut, number)
-            .map_err(ExecutionError::PreparationError)?;
 
-        tracing::info!("Resolved transaction to: {tx:?}");
+        // tracing::info!("Resolved transaction to: {tx:?}");
 
         let finished = self.sched.enqueue_transaction(tx);
         Ok((number, finished))

@@ -137,7 +137,8 @@ impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionSched
         }
     }
 
-    fn flush_internal(&self, flush_gen: u64) {
+    fn flush_internal(&self, flush_gen: u64, from_watchdog: bool) {
+        tracing::info!("flush_internal 1 ({from_watchdog}) (gen={flush_gen})");
         let old = self
             .dependency_graph_builder
             .swap(Arc::new(DependencyGraphBuilder::new(flush_gen + 2)));
@@ -148,22 +149,26 @@ impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionSched
         self.generation.store(flush_gen + 2, Ordering::SeqCst);
         // wait until `old` is the only reference left
         // since we swap()'ed already, the strong_count is monotonically decreasing
-        while Arc::strong_count(&old) > 1 {
-            std::hint::spin_loop();
+        if old.transaction_count() > 0 {
+            tracing::info!("flush_internal 2 ({from_watchdog}) (gen={flush_gen})");
+            while Arc::strong_count(&old) > 1 {
+                std::hint::spin_loop();
+            }
+            tracing::info!("flush_internal 3 ({from_watchdog}) (gen={flush_gen})");
+            // once `old` is the only reference, we can call Arc::into_inner on it and send it down the
+            // pipe
+            let dg = Arc::into_inner(old).unwrap();
+            (self.pipe)(dg.into_batch());
         }
-        // once `old` is the only reference, we can call Arc::into_inner on it and send it down the
-        // pipe
-        let dg = Arc::into_inner(old).unwrap();
-        (self.pipe)(dg.into_batch());
     }
 
-    fn flush(&self, flush_gen: u64) -> bool {
+    fn flush(&self, flush_gen: u64, from_watchdog: bool) -> bool {
         if self
             .generation
             .compare_exchange(flush_gen, flush_gen + 1, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
-            self.flush_internal(flush_gen);
+            self.flush_internal(flush_gen, from_watchdog);
             true
         } else {
             false
@@ -188,7 +193,7 @@ impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionSched
                 // swap ran, but watchdog didn't see it in time
             } else {
                 // actually need to flush
-                self.flush(gen);
+                self.flush(gen, true);
             }
         }
     }
@@ -207,9 +212,12 @@ impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionSched
         };
 
         if self.threshold.should_flush(stats) {
-            if !self.flush(orig_gen) {
+            tracing::info!("enqueue_transaction: flushing");
+            if !self.flush(orig_gen, false) {
+                tracing::info!("enqueue_transaction: waiting for post-flush barrier");
                 self.post_flush_barrier();
             }
+            tracing::info!("enqueue_transaction: done flushing");
         }
 
         future

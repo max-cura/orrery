@@ -56,9 +56,12 @@ impl Herd {
         partition_limits: PartitionLimits,
         batch: Batch,
     ) -> Storage {
+        tracing::info!("running dispatcher...");
         if batch.len() == 0 {
             return storage;
         }
+
+        tracing::info!("building dispatcher");
 
         let mut partition_dispatcher = PartitionDispatcher::new();
         let arc_storage = Arc::new(storage);
@@ -68,6 +71,8 @@ impl Herd {
                 storage: Arc::clone(&arc_storage),
             });
         };
+
+        tracing::info!("waiting for workers to finish");
 
         // park the workers until we can install a batch
         self.herd_control.wait_for_workers_finished(false);
@@ -90,6 +95,7 @@ impl Herd {
             self.herd_control.start_new_round();
             tracing::info!("dispatching round");
             partition_dispatcher.dispatch_one_round(submit, &partition_limits);
+            partition_dispatcher.load_deferred();
             self.herd_control.wait_for_workers_finished(true);
         }
         // }
@@ -176,6 +182,10 @@ struct Worker {
 }
 impl Worker {
     fn run_partition(&mut self, mut partition: PartitionTask) {
+        tracing::info!(
+            "running partition of size: {}",
+            partition.partition.transactions_mut().len()
+        );
         for txn in partition.partition.transactions_mut() {
             let mut write_cache = WriteCache::new();
             let result = txn.execute(&mut write_cache, &partition.storage);

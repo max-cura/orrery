@@ -74,7 +74,7 @@ async fn execute(
 ) -> Json<
     Result<Result<Vec<u8>, ExecutionError>, RaftError<NodeId, ClientWriteError<NodeId, BasicNode>>>,
 > {
-    tracing::warn!("API: /execute");
+    // tracing::warn!("API: /execute");
     Json(
         match app.raft_instance.client_write(req).await.map(|r| {
             r.data

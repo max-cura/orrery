@@ -77,6 +77,7 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<StateMachine> {
         let sm = self.state_machine.read().await;
         let data = {
             let mut pcis = sm.state.phase_controller.inner.storage.lock();
+            tracing::info!("storage locked: snapshot");
             while sm.state.phase_controller.inner.flag.load(Ordering::SeqCst) {
                 sm.state.phase_controller.inner.cv.wait(&mut pcis);
             }
@@ -92,10 +93,12 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<StateMachine> {
                     })
                     .collect::<Vec<_>>(),
             };
-            serde_json::to_vec(&snapshot_frame).map_err(|e| {
-                panic!("failed to build snapshot: {e}");
+            let s = serde_json::to_vec(&snapshot_frame).map_err(|e| {
+                // panic!("failed to build snapshot: {e}");
                 StorageIOError::read_state_machine(&e)
-            })?
+            })?;
+            tracing::info!("storage unlocked: snapshot");
+            s
         };
         let last_applied_log_id = sm.last_applied_log;
         let last_membership = sm.last_membership.clone();
@@ -162,7 +165,7 @@ impl RaftStateMachine<TypeConfig> for Arc<StateMachine> {
                     responses.push(Response { result: None });
                 }
                 EntryPayload::Normal(request) => {
-                    tracing::info!("applying transaction {:?}", request.transaction);
+                    // tracing::info!("applying transaction {:?}", request.transaction);
                     // NOTE add_transaction will block the network thread if interrupted by batch
                     // execution
                     let finished = match sm
@@ -171,7 +174,7 @@ impl RaftStateMachine<TypeConfig> for Arc<StateMachine> {
                         .add_transaction(request.transaction.clone())
                     {
                         Ok((number, mut finished)) => {
-                            tracing::info!("successfully applied transaction no. {number}");
+                            // tracing::info!("successfully applied transaction no. {number}");
                             // TODO: deduplication
                             sm.state
                                 .outstanding_transactions
