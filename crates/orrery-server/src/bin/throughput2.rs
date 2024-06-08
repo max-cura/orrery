@@ -2,6 +2,7 @@ use orrery_server::client::Client;
 use orrery_wire::{Object, Op, RowLocator, TransactionRequest};
 use rand;
 use rand::Rng;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinSet;
@@ -27,31 +28,38 @@ async fn main() {
     });
     let mut txno = || numbers.next().unwrap();
 
-    let mut transaction_sets = vec![];
+    println!("Building transactions...");
+
     const FANOUT: usize = 200;
     const BLADE: usize = 10_000;
     const OPS: usize = 100;
-    for i in 0..FANOUT {
-        let mut set = vec![];
-        let cs = format!("c{i}");
-        for j in 0..BLADE {
-            let mut ir = vec![];
-            for _ in 0..OPS {
-                let row = rand::thread_rng().gen_range(0..10000u64);
-                ir.push(Op::Put(
-                    RowLocator::new("g", Vec::from_iter(row.to_le_bytes().into_iter())),
-                    0,
-                ));
+
+    let transaction_sets: Vec<Vec<TransactionRequest>> = (0..FANOUT)
+        .into_par_iter()
+        .map(|i| {
+            let mut set = vec![];
+            let cs = format!("c{i}");
+            for j in 0..BLADE {
+                let mut ir = vec![];
+                for _ in 0..OPS {
+                    let row = rand::thread_rng().gen_range(0..10000u64);
+                    ir.push(Op::Put(
+                        RowLocator::new("g", Vec::from_iter(row.to_le_bytes().into_iter())),
+                        0,
+                    ));
+                }
+                let tx = TransactionRequest {
+                    ir,
+                    const_buf: vec![Object::Int(i as i64)],
+                    client_id: cs.clone(),
+                    tx_no: j,
+                };
             }
-            let tx = TransactionRequest {
-                ir,
-                const_buf: vec![Object::Int(i as i64)],
-                client_id: cs.clone(),
-                tx_no: j,
-            };
-        }
-        transaction_sets.push(set);
-    }
+            set
+        })
+        .collect();
+
+    println!("Running transactions...");
 
     let t1 = std::time::Instant::now();
     let mut futures = JoinSet::new();
@@ -68,6 +76,9 @@ async fn main() {
         res.unwrap();
     }
     let t2 = std::time::Instant::now();
+
+    println!("Done");
+    println!();
 
     println!(
         "Ran {}x{}PUT queries in time {:?}",
