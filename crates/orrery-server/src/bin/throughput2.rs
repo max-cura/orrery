@@ -1,0 +1,78 @@
+use orrery_server::client::Client;
+use orrery_wire::{Object, Op, RowLocator, TransactionRequest};
+use rand;
+use rand::Rng;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::task::JoinSet;
+
+// #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::main]
+async fn main() {
+    let net_configs = vec![
+        (0, "127.0.0.1:3001"),
+        (1, "127.0.0.1:3002"),
+        (2, "127.0.0.1:3003"),
+    ];
+
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    let client = Arc::new(Client::new(0, net_configs[0].1.to_string()));
+
+    let mut currnum = 0usize;
+    let mut numbers = std::iter::repeat_with(|| {
+        let c = currnum;
+        currnum += 1;
+        c
+    });
+    let mut txno = || numbers.next().unwrap();
+
+    let mut transaction_sets = vec![];
+    const FANOUT: usize = 200;
+    const BLADE: usize = 10_000;
+    const OPS: usize = 100;
+    for i in 0..FANOUT {
+        let mut set = vec![];
+        let cs = format!("c{i}");
+        for j in 0..BLADE {
+            let mut ir = vec![];
+            for _ in 0..OPS {
+                let row = rand::thread_rng().gen_range(0..10000u64);
+                ir.push(Op::Put(
+                    RowLocator::new("g", Vec::from_iter(row.to_le_bytes().into_iter())),
+                    0,
+                ));
+            }
+            let tx = TransactionRequest {
+                ir,
+                const_buf: vec![Object::Int(i as i64)],
+                client_id: cs.clone(),
+                tx_no: j,
+            };
+        }
+        transaction_sets.push(set);
+    }
+
+    let t1 = std::time::Instant::now();
+    let mut futures = JoinSet::new();
+    let mut ok_count = 0;
+    for set in transaction_sets.into_iter() {
+        let c = Arc::clone(&client);
+        futures.spawn(async move {
+            for tx in set {
+                let _ = c.execute(tx).await.unwrap();
+            }
+        });
+    }
+    while let Some(res) = futures.join_next().await {
+        res.unwrap();
+    }
+    let t2 = std::time::Instant::now();
+
+    println!(
+        "Ran {}x{}PUT queries in time {:?}",
+        FANOUT * BLADE,
+        OPS,
+        t2 - t1
+    );
+}

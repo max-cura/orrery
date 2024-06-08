@@ -9,7 +9,7 @@ async fn main() {
     // tracing_subscriber::fmt().with_level(true).init();
 
     let net_configs = vec![
-        (0, "127.0.0.1:3001", "0.0.0.0:3001"),
+        (0, "127.0.0.1:3002"),
         // (1, "127.0.0.1:3002", "0.0.0.0:3002"),
         // (2, "127.0.0.1:3003", "0.0.0.0:3003"),
     ];
@@ -50,21 +50,21 @@ async fn main() {
     };
     println!("TX2: {:?}", client.execute(tx2).await);
 
-    let mut futures = JoinSet::new();
-    for i in 0..100 {
-        let tx = TransactionRequest {
-            ir: vec![Op::Update(RowLocator::new("g", vec![12]), 0)],
-            const_buf: vec![Object::Int(i as i64)],
-            client_id: "client".to_string(),
-            tx_no: txno(),
-        };
-        let c = Arc::clone(&client);
-        futures.spawn(async move { (i, c.execute(tx).await) });
-    }
-    while let Some(res) = futures.join_next().await {
-        let (i, r) = res.unwrap();
-        println!("TX3.{i}: {r:?}");
-    }
+    // let mut futures = JoinSet::new();
+    // for i in 0..100 {
+    //     let tx = TransactionRequest {
+    //         ir: vec![Op::Update(RowLocator::new("g", vec![12]), 0)],
+    //         const_buf: vec![Object::Int(i as i64)],
+    //         client_id: "client".to_string(),
+    //         tx_no: txno(),
+    //     };
+    //     let c = Arc::clone(&client);
+    //     futures.spawn(async move { (i, c.execute(tx).await) });
+    // }
+    // while let Some(res) = futures.join_next().await {
+    //     let (i, r) = res.unwrap();
+    //     println!("TX3.{i}: {r:?}");
+    // }
 
     let tx2 = TransactionRequest {
         ir: vec![Op::Read(RowLocator::new("g", vec![12]))],

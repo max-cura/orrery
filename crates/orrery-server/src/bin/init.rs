@@ -19,18 +19,18 @@ async fn main() {
     client.init().await.unwrap();
 
     println!("Metrics: {:?}", client.metrics().await.unwrap());
-    // println!("Adding learners...");
-    // client
-    //     .add_learner((net_configs[1].0, net_configs[1].1.to_string()))
-    //     .await
-    //     .unwrap();
-    // client
-    //     .add_learner((net_configs[2].0, net_configs[2].1.to_string()))
-    //     .await
-    //     .unwrap();
-    //
-    // println!("Adding learners... done");
-    // println!("Metrics: {:?}", client.metrics().await.unwrap());
-    //
-    // client.change_membership(&btreeset! {0,1,2}).await.unwrap();
+    println!("Adding learners...");
+    client
+        .add_learner((net_configs[1].0, net_configs[1].1.to_string()))
+        .await
+        .unwrap();
+    client
+        .add_learner((net_configs[2].0, net_configs[2].1.to_string()))
+        .await
+        .unwrap();
+
+    println!("Adding learners... done");
+    println!("Metrics: {:?}", client.metrics().await.unwrap());
+
+    client.change_membership(&btreeset! {0,1,2}).await.unwrap();
 }
