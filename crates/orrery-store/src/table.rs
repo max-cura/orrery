@@ -3,9 +3,10 @@ use orrery_wire::Object;
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Deserialize, Serialize, Serializer};
 use std::cell::UnsafeCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Formatter};
-use std::mem::{ManuallyDrop, MaybeUninit};
+
+use serde_json_any_key::any_key_map;
 
 #[derive(Copy, Clone)]
 struct FreeListNode {
@@ -13,17 +14,34 @@ struct FreeListNode {
 }
 const FREE_LIST_END: usize = usize::MAX;
 
+#[derive(Clone)]
 pub struct RowStorageInner {
-    data: ManuallyDrop<MaybeUninit<Object>>,
+    data: Option<Object>,
+    // data: ManuallyDrop<MaybeUninit<Object>>,
     // free_list_node: FreeListNode,
 }
 pub struct RowStorage {
     inner: UnsafeCell<RowStorageInner>,
 }
+impl Serialize for RowStorage {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        (unsafe { &*self.inner.get() }).data.serialize(serializer)
+    }
+}
+impl Clone for RowStorage {
+    fn clone(&self) -> Self {
+        Self {
+            inner: UnsafeCell::new(unsafe { &*self.inner.get() }.clone()),
+        }
+    }
+}
 /// SAFETY:
 ///  WHILE TRANSACTIONS ARE EXECUTING, ONLY TRANSACTION EXECUTION CAN MODIFY THIS!
-#[derive(Deserialize)]
-#[serde(from = "DeserializeProxy")]
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(from = "DeserializeProxy", into = "DeserializeProxy")]
 pub struct Table {
     id: usize,
     index: BTreeMap<Vec<u8>, BackingRow>,
@@ -32,45 +50,50 @@ pub struct Table {
     // guaranteed that no two threads touch the same key.
     ephemerals: DashMap<usize, bool>,
 }
-impl Serialize for Table {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_struct("Table", 4)?;
-        s.serialize_field("id", &self.id)?;
-        s.serialize_field("index", &self.index)?;
-        struct T<'a> {
-            i: &'a [RowStorage],
-            e: &'a DashMap<usize, bool>,
-        }
-        impl<'a> Serialize for T<'a> {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: Serializer,
-            {
-                let mut s = serializer.serialize_seq(Some(self.i.len()))?;
-                for (j, br) in self.i.into_iter().enumerate() {
-                    if self.e.get(&j).map(|x| *x).unwrap_or(true) {
-                        s.serialize_element(&Some(unsafe {
-                            (&*br.inner.get()).data.assume_init_ref()
-                        }))?;
-                    }
-                }
-                s.end()
-            }
-        }
-        s.serialize_field(
-            "backing_rows",
-            &T {
-                i: &self.backing_rows,
-                e: &self.ephemerals,
-            },
-        )?;
-        s.serialize_field("ephemerals", &self.ephemerals)?;
-        s.end()
-    }
-}
+// impl Serialize for Table {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: Serializer,
+//     {
+//         let mut s = serializer.serialize_struct("Table", 4)?;
+//         s.serialize_field("id", &self.id)?;
+//         s.serialize_field("index", &self.index)?;
+//         struct T<'a> {
+//             i: &'a [RowStorage],
+//             e: &'a DashMap<usize, bool>,
+//         }
+//         impl<'a> Serialize for T<'a> {
+//             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//             where
+//                 S: Serializer,
+//             {
+//                 let mut s = serializer.serialize_seq(Some(self.i.len()))?;
+//                 for (j, br) in self.i.into_iter().enumerate() {
+//                     if self.e.get(&j).map(|x| *x).unwrap_or(true) {
+//                         s.serialize_element(&Some(unsafe {
+//                             (&*br.inner.get())
+//                                 .data
+//                                 // .assume_init_ref()
+//                                 .as_ref()
+//                                 .unwrap()
+//                         }))?;
+//                     }
+//                 }
+//                 s.end()
+//             }
+//         }
+//         s.serialize_field(
+//             "backing_rows",
+//             &T {
+//                 i: &self.backing_rows,
+//                 e: &self.ephemerals,
+//             },
+//         )?;
+//         s.serialize_field("ephemerals", &self.ephemerals)?;
+//         s.end()
+//     }
+// }
+
 impl From<DeserializeProxy> for Table {
     fn from(
         DeserializeProxy {
@@ -88,28 +111,53 @@ impl From<DeserializeProxy> for Table {
                 .map(|x| match x {
                     Some(x) => RowStorage {
                         inner: UnsafeCell::new(RowStorageInner {
-                            data: ManuallyDrop::new(MaybeUninit::new(x)),
+                            // data: ManuallyDrop::new(MaybeUninit::new(x)),
+                            data: Some(x),
                         }),
                     },
                     None => RowStorage {
                         inner: UnsafeCell::new(RowStorageInner {
-                            data: ManuallyDrop::new(MaybeUninit::uninit()),
+                            // data: ManuallyDrop::new(MaybeUninit::uninit()),
+                            data: None,
                         }),
                     },
                 })
                 .collect(),
-            ephemerals,
+            ephemerals: DashMap::from_iter(ephemerals.into_iter()),
         }
     }
 }
-#[derive(Debug, Deserialize)]
+impl From<Table> for DeserializeProxy {
+    fn from(
+        Table {
+            id,
+            index,
+            backing_rows,
+            ephemerals,
+        }: Table,
+    ) -> Self {
+        Self {
+            id,
+            index,
+            backing_rows: backing_rows
+                .into_iter()
+                .map(|x| unsafe { UnsafeCell::into_inner(x.inner).data })
+                .collect(),
+            ephemerals: HashMap::from_iter(ephemerals.into_iter()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct DeserializeProxy {
     id: usize,
+    #[serde(with = "any_key_map")]
     index: BTreeMap<Vec<u8>, BackingRow>,
     backing_rows: Vec<Option<Object>>,
     // DashMap because we may have multiple threads touching it at the same time, though we are
     // guaranteed that no two threads touch the same key.
-    ephemerals: DashMap<usize, bool>,
+    #[serde(with = "any_key_map")]
+    ephemerals: HashMap<usize, bool>,
 }
 impl Debug for Table {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -145,14 +193,16 @@ impl Table {
         let i = match self.next_free_row() {
             Some(i) => {
                 self.backing_rows[i].inner.get_mut().data =
-                    ManuallyDrop::new(MaybeUninit::uninit());
+                    // ManuallyDrop::new(MaybeUninit::uninit());
+                    None;
                 i
             }
             None => {
                 let i = self.backing_rows.len();
                 self.backing_rows.push(RowStorage {
                     inner: UnsafeCell::new(RowStorageInner {
-                        data: ManuallyDrop::new(MaybeUninit::uninit()),
+                        // data: ManuallyDrop::new(MaybeUninit::uninit()),
+                        data: None,
                     }),
                 });
                 i
@@ -190,19 +240,21 @@ impl Table {
 
     pub unsafe fn delete(&self, row: usize) {
         // dematerialize!
-        let md = std::mem::replace(
+        let _ = std::mem::replace(
             &mut (&mut *self.backing_rows[row].inner.get()).data,
-            ManuallyDrop::new(MaybeUninit::uninit()),
+            // ManuallyDrop::new(MaybeUninit::uninit()),
+            None,
         );
-        ManuallyDrop::into_inner(md).assume_init();
+        // ManuallyDrop::into_inner(md).assume_init();
         self.ephemerals.insert(row, false);
     }
     pub unsafe fn put(&self, row: usize, object: Object) {
-        let md = std::mem::replace(
+        let _ = std::mem::replace(
             &mut (&mut *self.backing_rows[row].inner.get()).data,
-            ManuallyDrop::new(MaybeUninit::new(object)),
+            Some(object),
+            // ManuallyDrop::new(MaybeUninit::new(object)),
         );
-        ManuallyDrop::into_inner(md).assume_init();
+        // ManuallyDrop::into_inner(md).assume_init();
         self.ephemerals.insert(row, true);
     }
     pub unsafe fn read(&self, row: usize) -> Result<Object, MaterializationError> {
@@ -210,7 +262,9 @@ impl Table {
             // ok
             Ok((&*self.backing_rows[row].inner.get())
                 .data
-                .assume_init_ref()
+                // .assume_init_ref()
+                .as_ref()
+                .unwrap()
                 .clone())
         } else {
             Err(MaterializationError::Unmaterialized)

@@ -10,10 +10,13 @@ use orrery_store::{Config, ExecutionError, PhaseController, Storage, Transaction
 use orrery_wire::TransactionRequest;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
+use serde_json_any_key::{any_key_map, any_key_vec};
 use std::io::Cursor;
+use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::log;
 
 pub struct StoredSnapshot {
     pub metadata:
@@ -58,11 +61,13 @@ impl StateMachine {
 #[derive(Debug, Serialize)]
 struct SnapshotFrame<'a> {
     storage: &'a Storage,
-    outstanding_transactions: &'a DashMap<usize, TransactionRequest>,
+    #[serde(with = "any_key_vec")]
+    outstanding_transactions: Vec<(usize, TransactionRequest)>,
 }
 #[derive(Debug, Deserialize)]
 struct SnapshotFrameDeser {
     storage: Storage,
+    #[serde(with = "any_key_map")]
     outstanding_transactions: DashMap<usize, TransactionRequest>,
 }
 impl RaftSnapshotBuilder<TypeConfig> for Arc<StateMachine> {
@@ -77,10 +82,20 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<StateMachine> {
             }
             let snapshot_frame = SnapshotFrame {
                 storage: pcis.as_ref().unwrap(),
-                outstanding_transactions: &sm.state.outstanding_transactions,
+                outstanding_transactions: sm
+                    .state
+                    .outstanding_transactions
+                    .iter()
+                    .map(|x| {
+                        let y = x.pair();
+                        (*y.0, y.1.clone())
+                    })
+                    .collect::<Vec<_>>(),
             };
-            serde_json::to_vec(&snapshot_frame)
-                .map_err(|e| StorageIOError::read_state_machine(&e))?
+            serde_json::to_vec(&snapshot_frame).map_err(|e| {
+                panic!("failed to build snapshot: {e}");
+                StorageIOError::read_state_machine(&e)
+            })?
         };
         let last_applied_log_id = sm.last_applied_log;
         let last_membership = sm.last_membership.clone();
@@ -147,6 +162,7 @@ impl RaftStateMachine<TypeConfig> for Arc<StateMachine> {
                     responses.push(Response { result: None });
                 }
                 EntryPayload::Normal(request) => {
+                    tracing::info!("applying transaction {:?}", request.transaction);
                     // NOTE add_transaction will block the network thread if interrupted by batch
                     // execution
                     let finished = match sm
@@ -155,6 +171,7 @@ impl RaftStateMachine<TypeConfig> for Arc<StateMachine> {
                         .add_transaction(request.transaction.clone())
                     {
                         Ok((number, mut finished)) => {
+                            tracing::info!("successfully applied transaction no. {number}");
                             // TODO: deduplication
                             sm.state
                                 .outstanding_transactions
@@ -165,7 +182,10 @@ impl RaftStateMachine<TypeConfig> for Arc<StateMachine> {
                             }));
                             Ok(finished)
                         }
-                        Err(e) => Err(e),
+                        Err(e) => {
+                            tracing::error!("error applying transaction: {e}");
+                            Err(e)
+                        }
                     };
                     responses.push(Response {
                         result: Some(finished),
@@ -210,6 +230,7 @@ impl RaftStateMachine<TypeConfig> for Arc<StateMachine> {
             storage,
             outstanding_transactions,
         } = serde_json::from_slice(&new_snapshot.data).map_err(|e| {
+            tracing::error!("Failed to deserialize snapshot: {e}");
             StorageIOError::read_snapshot(Some(new_snapshot.metadata.signature()), &e)
         })?;
         let config = {

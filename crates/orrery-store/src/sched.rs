@@ -80,10 +80,12 @@ pub fn new_with_watchdog<TH: Threshold + 'static, F: Fn(Batch) -> () + Send + Sy
     let ts_arc_weak = Arc::downgrade(&ts_arc);
 
     let watchdog: JoinHandle<()> = tokio::spawn(async move {
+        tracing::debug!("watchdog entered");
         'watchdog_loop: loop {
-            match tokio::time::timeout(max_flush_interval, async { flush_receiver.recv().await })
-                .await
-            {
+            let r = tokio::time::timeout(max_flush_interval, async { flush_receiver.recv().await })
+                .await;
+            tracing::debug!("watchdog: {r:?}");
+            match r {
                 Ok(o) => {
                     /* okay */
                     if o.is_none() {
@@ -103,6 +105,8 @@ pub fn new_with_watchdog<TH: Threshold + 'static, F: Fn(Batch) -> () + Send + Sy
 
     // if JoinHandle is dropped, then the task continues to run in the background
     drop(watchdog);
+
+    tracing::info!("created watchdog");
 
     ts_arc
 }

@@ -56,6 +56,10 @@ impl Herd {
         partition_limits: PartitionLimits,
         batch: Batch,
     ) -> Storage {
+        if batch.len() == 0 {
+            return storage;
+        }
+
         let mut partition_dispatcher = PartitionDispatcher::new();
         let arc_storage = Arc::new(storage);
         let submit = |partition: Partition| {
@@ -66,7 +70,7 @@ impl Herd {
         };
 
         // park the workers until we can install a batch
-        self.herd_control.wait_for_workers_finished();
+        self.herd_control.wait_for_workers_finished(false);
 
         // loop {
         // let batch = {
@@ -77,13 +81,19 @@ impl Herd {
         //     queue.pop_front().unwrap()
         // };
         // run the dispatcher
+
+        let sc = Arc::strong_count(&arc_storage);
+        tracing::info!("strong count: {sc}");
+
         partition_dispatcher.install_batch(batch);
         while !partition_dispatcher.batch_done() {
-            self.herd_control.start_new_batch();
+            self.herd_control.start_new_round();
+            tracing::info!("dispatching round");
             partition_dispatcher.dispatch_one_round(submit, &partition_limits);
-            self.herd_control.wait_for_workers_finished();
+            self.herd_control.wait_for_workers_finished(true);
         }
         // }
+        tracing::info!("strong count (after): {sc}");
         Arc::into_inner(arc_storage)
             .expect("Storage should have exactly 1 strong reference when workers are finished")
     }
@@ -99,6 +109,7 @@ impl Herd {
 }
 
 /// Used internally to coordinate a herd of workers.
+#[derive(Debug)]
 struct HerdControl {
     batch_dispatch_finished: AtomicBool,
     wait_for_workers_to_finish: Barrier,
@@ -110,7 +121,7 @@ impl HerdControl {
     /// Create a new [`HerdControl`] with the specified worker count.
     fn new(worker_count: usize) -> Self {
         Self {
-            batch_dispatch_finished: AtomicBool::new(false),
+            batch_dispatch_finished: AtomicBool::new(true),
             wait_for_workers_to_finish: Barrier::new(worker_count),
             new_batch: Barrier::new(worker_count + 1),
             workers_finished: parking_lot::Mutex::new(false),
@@ -122,8 +133,9 @@ impl HerdControl {
     /// two-phase batch stepping.
     ///
     /// Wakes the herd, and tells them to start polling the injector.
-    fn start_new_batch(&self) {
+    fn start_new_round(&self) {
         self.batch_dispatch_finished.store(false, Ordering::SeqCst);
+        tracing::info!("set batch_dispatch_finished=false");
         self.new_batch.wait();
     }
     /// Used by the herd controller, along with [`start_new_batch`] to drive the two-phase batch
@@ -131,26 +143,33 @@ impl HerdControl {
     ///
     /// Indicates to the herd that no new tasks will be injected, and sleeps the thread until all
     /// tasks in the injector are completed.
-    fn wait_for_workers_finished(&self) {
+    #[tracing::instrument]
+    fn wait_for_workers_finished(&self, wait_on_false: bool) {
+        tracing::info!("set batch_dispatch_finished=true");
         self.batch_dispatch_finished.store(true, Ordering::SeqCst);
         let mut g = self.workers_finished.lock();
-        if !*g {
+        tracing::info!("waiting for workers to finish, finished={}", *g);
+        if *g == false && wait_on_false {
+            // if workers aren't finish, wait until they all finish
             self.workers_finished_cv.wait(&mut g);
-            *g = false;
         }
+        *g = false;
     }
 
     /// Called by a single worker exactly once when both conditions are true:
     ///     - all workers in the herd have received the batch have received the batch finished
     ///       notification
     ///     - the injection queue is empty
+    #[tracing::instrument]
     fn workers_finished(&self) {
+        tracing::info!("workers all finished");
         let mut g = self.workers_finished.lock();
         *g = true;
         self.workers_finished_cv.notify_one();
     }
 }
 
+#[derive(Debug)]
 struct Worker {
     herd_control: Arc<HerdControl>,
     injector: Arc<Injector<PartitionTask>>,
@@ -165,6 +184,7 @@ impl Worker {
                     partition.storage.apply(write_cache);
                 }
             }
+            tracing::info!("finished transaction {txn:?}, result is {result:?}");
             if let Some(fin) = txn.get_finished() {
                 TransactionFinishedInner::finish(fin, result)
             }
@@ -183,7 +203,9 @@ impl Worker {
         }
     }
 
+    #[tracing::instrument]
     fn run(&mut self) {
+        tracing::info!("running worker");
         loop {
             self.run_available_partitions();
             if self
@@ -202,7 +224,9 @@ impl Worker {
                 {
                     self.herd_control.workers_finished();
                 }
+                tracing::warn!("worker waiting for new batch");
                 self.herd_control.new_batch.wait();
+                tracing::warn!("worker notified of new batch");
             }
         }
     }

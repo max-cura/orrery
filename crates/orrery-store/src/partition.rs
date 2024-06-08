@@ -138,6 +138,7 @@ impl Partition {
     pub fn transactions_mut(&mut self) -> &mut [Transaction] {
         &mut self.transactions
     }
+    #[tracing::instrument]
     pub fn add(&mut self, txn: Transaction) {
         // println!("add {}: WRITE {}", txn.no(), txn.write_set.to_string());
         // readonly_set procedure is a little more involved since invalidation may occur
@@ -149,10 +150,15 @@ impl Partition {
         self.txn_nos.push(txn.no());
         self.transactions.push(txn);
 
-        let r = &mut self.write_set.row_sets[0].rows;
-        let l1 = r.len();
-        r.dedup();
-        assert_eq!(l1, r.len());
+        tracing::info!("self={self:?}");
+
+        if self.write_set.len() > 0 {
+            // small sanity check
+            let r = &mut self.write_set.row_sets[0].rows;
+            let l1 = r.len();
+            r.dedup();
+            assert_eq!(l1, r.len());
+        }
     }
     pub fn try_add(
         &mut self,
@@ -195,6 +201,11 @@ impl Partition {
 pub struct Batch {
     access_set: HashMap<(usize, usize), (bool, Vec<(usize, bool)>)>,
     transactions: BTreeMap<usize, Transaction>,
+}
+impl Batch {
+    pub fn len(&self) -> usize {
+        self.transactions.len()
+    }
 }
 
 #[derive(Debug)]

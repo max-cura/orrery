@@ -34,10 +34,12 @@ impl Storage {
 impl Storage {
     /// DO NOT USE
     unsafe fn delete_unchecked(&self, table_ref: (usize, usize)) {
+        tracing::warn!("DELETE AT ({},{})", table_ref.0, table_ref.1);
         self.tables[table_ref.0].delete(table_ref.1);
     }
     /// DO NOT USE
     unsafe fn put(&self, table_ref: (usize, usize), value: Object) {
+        tracing::warn!("PUT AT ({},{}), OBJ={value:?}", table_ref.0, table_ref.1);
         self.tables[table_ref.0].put(table_ref.1, value);
     }
     pub unsafe fn apply(&self, dc: WriteCache) {
@@ -53,6 +55,7 @@ impl Storage {
     ///
     /// In particular, this means that this will panic if `table_ref` is completely out of range.
     pub unsafe fn read(&self, table_ref: (usize, usize)) -> Option<Object> {
+        tracing::warn!("READ AT ({},{})", table_ref.0, table_ref.1);
         self.tables[table_ref.0].read(table_ref.1).ok()
     }
 

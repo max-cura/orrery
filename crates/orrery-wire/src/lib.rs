@@ -22,6 +22,14 @@ pub struct RowLocator {
     pub table: String,
     pub row_key: Vec<u8>,
 }
+impl RowLocator {
+    pub fn new(s: impl ToString, rk: impl Into<Vec<u8>>) -> Self {
+        Self {
+            table: s.to_string(),
+            row_key: rk.into(),
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Op {
     // SSA(SSA),
@@ -62,7 +70,7 @@ pub enum Object {
     // List { item_ty: TySpec, items: Vec<Object> },
     Tuple(Vec<Object>),
     Option { inner: Option<Box<Object>> },
-    Func { ssa_begin: usize },
+    // Func { ssa_begin: usize },
 }
 
 pub fn serialize_object_set(input: &[Object]) -> Result<Vec<u8>, serde_json::Error> {

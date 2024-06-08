@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::error::Error;
 
-mod t {
+pub mod t {
     use crate::raft::NodeId;
     use openraft::error::{Infallible, RaftError};
     use openraft::BasicNode;

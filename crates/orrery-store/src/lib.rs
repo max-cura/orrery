@@ -75,6 +75,7 @@ impl PhaseController {
     pub fn config(&self) -> Config {
         self.inner.config.clone()
     }
+    #[tracing::instrument]
     pub fn new(config: Config, storage: Storage) -> Self {
         let fct = config.fixed_config_threshold;
         let inner = Arc::new(Inner {
@@ -84,6 +85,7 @@ impl PhaseController {
             herd: Herd::new(config.worker_count).unwrap(),
             config,
         });
+        tracing::info!("created Inner, trying to build watchdog");
         let inner2 = Arc::clone(&inner);
         Self {
             inner,
@@ -103,6 +105,9 @@ impl PhaseController {
         let number = storage_mut.next_number();
         let tx = prepare_query(transaction_request, storage_mut, number)
             .map_err(ExecutionError::PreparationError)?;
+
+        tracing::info!("Resolved transaction to: {tx:?}");
+
         let finished = self.sched.enqueue_transaction(tx);
         Ok((number, finished))
     }
@@ -185,37 +190,37 @@ pub fn prepare_query(
 
 #[derive(Debug, Serialize, Deserialize, Error)]
 pub enum PreparationError {
-    #[error("")]
+    #[error("read error: {0}")]
     Read(ReadError),
-    #[error("")]
+    #[error("update error: {0}")]
     Update(UpdateError),
-    #[error("")]
+    #[error("insert error: {0}")]
     Insert(InsertError),
-    #[error("")]
+    #[error("delete error: {0}")]
     Delete(DeleteError),
-    #[error("")]
+    #[error("put error: {0}")]
     Put(PutError),
 }
 
 #[derive(Debug, Serialize, Deserialize, Error)]
 pub enum ExecutionError {
-    #[error("")]
+    #[error("input value index out of range")]
     InputOutOfRange,
-    #[error("")]
+    #[error("serialization error: {0}")]
     Serialization(String),
-    #[error("")]
+    #[error("read error: {0}")]
     ReadError(ReadError),
-    #[error("")]
+    #[error("update error: {0}")]
     UpdateError(UpdateError),
-    #[error("")]
+    #[error("precondition failure")]
     PreconditionFailed,
-    #[error("")]
+    #[error("insert error: {0}")]
     InsertError(InsertError),
-    #[error("")]
+    #[error("put error: {0}")]
     PutError(PutError),
-    #[error("")]
+    #[error("delete error: {0}")]
     DeleteError(DeleteError),
-    #[error("")]
+    #[error("error preparing transaction: {0}")]
     PreparationError(PreparationError),
 }
 #[derive(Debug)]
@@ -226,40 +231,40 @@ pub type ExecutionResult = Result<ExecutionSuccess, ExecutionError>;
 
 #[derive(Debug, Serialize, Deserialize, Error)]
 pub enum ReadError {
-    #[error("")]
+    #[error("invalid table")]
     InvalidTable,
-    #[error("")]
+    #[error("invalid row")]
     InvalidRow,
-    #[error("")]
+    #[error("row previously deleted")]
     Deleted,
 }
 #[derive(Debug, Serialize, Deserialize, Error)]
 pub enum UpdateError {
-    #[error("")]
+    #[error("invalid table")]
     InvalidTable,
-    #[error("")]
+    #[error("invalid row")]
     InvalidRow,
-    #[error("")]
+    #[error("row previously deleted")]
     Deleted,
 }
 #[derive(Debug, Serialize, Deserialize, Error)]
 pub enum DeleteError {
-    #[error("")]
+    #[error("invalid table")]
     InvalidTable,
-    #[error("")]
+    #[error("invalid row")]
     InvalidRow,
-    #[error("")]
+    #[error("row previously deleted")]
     Deleted,
 }
 #[derive(Debug, Serialize, Deserialize, Error)]
 pub enum InsertError {
-    #[error("")]
+    #[error("invalid table")]
     InvalidTable,
-    #[error("")]
+    #[error("row already exists")]
     RowExists,
 }
 #[derive(Debug, Serialize, Deserialize, Error)]
 pub enum PutError {
-    #[error("")]
+    #[error("invalid table")]
     InvalidTable,
 }

@@ -6,6 +6,7 @@ use openraft::{OptionalSend, RaftLogId, RaftLogReader, RaftTypeConfig};
 use orrery_store::{ExecutionError, TransactionFinished};
 use orrery_wire::TransactionRequest;
 use serde::de::{Error, Visitor};
+use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Debug, Formatter};
 use std::future::Future;
@@ -14,7 +15,7 @@ use std::ops::RangeBounds;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
-    transaction: TransactionRequest,
+    pub(crate) transaction: TransactionRequest,
 }
 
 // fn x() -> Option<Result<TransactionFinished, ExecutionError>> {}
@@ -29,7 +30,9 @@ impl Serialize for Response {
     where
         S: Serializer,
     {
-        serializer.serialize_unit_struct("Response")
+        let mut s = serializer.serialize_struct("Response", 0)?;
+        s.skip_field("result")?;
+        s.end()
     }
 }
 
