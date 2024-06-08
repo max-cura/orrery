@@ -10,9 +10,9 @@ use tokio::task::JoinSet;
 #[tokio::main]
 async fn main() {
     let net_configs = vec![
-        (0, "127.0.0.1:3001"),
-        (1, "127.0.0.1:3002"),
-        (2, "127.0.0.1:3003"),
+        (0, "127.0.0.1:23001"),
+        (1, "127.0.0.1:23002"),
+        (2, "127.0.0.1:23003"),
     ];
 
     tokio::time::sleep(Duration::from_millis(1000)).await;
