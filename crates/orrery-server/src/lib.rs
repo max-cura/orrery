@@ -99,6 +99,7 @@ pub async fn start_raft_node(
     // axum::serve(listener, app).await.unwrap();
     // let router = Router::new().route("/", get(|| async { "Hello, World!" }));
 
+    println!("listening at {bind_addr}");
     let listener = tokio::net::TcpListener::bind(bind_addr).await.unwrap();
     axum::serve(listener, router).await.unwrap();
 
