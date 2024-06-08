@@ -56,6 +56,7 @@ impl Inner {
         if batch.len() == 0 {
             return;
         }
+        println!("submitted batch, size={}", batch.len());
         tracing::info!("submit with batch size={}", batch.len());
         self.flag.store(true, Ordering::SeqCst);
         {
