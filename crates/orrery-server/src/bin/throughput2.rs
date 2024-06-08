@@ -30,8 +30,8 @@ async fn main() {
     let mut txno = || numbers.next().unwrap();
 
     const FANOUT: usize = 100;
-    const BLADE: usize = 10;
-    const OPS: usize = 100;
+    const BLADE: usize = 100;
+    const OPS: usize = 60;
 
     let mut times = vec![];
     for _ in 0..10 {

@@ -86,7 +86,7 @@ impl Client {
             None => self.inner.get(url),
         }
         .send();
-        let response = match tokio::time::timeout(Duration::from_millis(3000), f).await {
+        let response = match tokio::time::timeout(Duration::from_millis(10000), f).await {
             Ok(result) => result.map_err(|e| t::RPCError::Network(NetworkError::new(&e))),
             Err(timeout_err) => Err(t::RPCError::Network(NetworkError::new(&timeout_err))),
         }?;
