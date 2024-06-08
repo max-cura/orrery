@@ -33,7 +33,7 @@ async fn main() {
         let c = Arc::clone(&client);
         futures.spawn(async move {
             let cs = format!("c{i}");
-            for j in 0..100 {
+            for j in 0..10000 {
                 let row = rand::thread_rng().gen_range(0..10000u64);
                 let tx = TransactionRequest {
                     ir: vec![Op::Put(
