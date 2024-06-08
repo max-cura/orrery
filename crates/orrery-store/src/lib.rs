@@ -175,6 +175,10 @@ pub fn prepare_query(
             }
         }
     }
+    tr_write.sort();
+    tr_write.dedup();
+    tr_read.sort();
+    tr_read.dedup();
     let aset_write = AccessSet::from_table_refs(tr_write.into_iter());
     let mut aset_read = AccessSet::from_table_refs(tr_read.into_iter());
     aset_read.subtract_(&aset_write);
