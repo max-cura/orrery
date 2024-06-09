@@ -138,7 +138,7 @@ impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionSched
     }
 
     fn flush_internal(&self, flush_gen: u64, from_watchdog: bool) {
-        tracing::info!("flush_internal 1 ({from_watchdog}) (gen={flush_gen})");
+        // tracing::info!("flush_internal 1 ({from_watchdog}) (gen={flush_gen})");
         let old = self
             .dependency_graph_builder
             .swap(Arc::new(DependencyGraphBuilder::new(flush_gen + 2)));
@@ -150,11 +150,11 @@ impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionSched
         // wait until `old` is the only reference left
         // since we swap()'ed already, the strong_count is monotonically decreasing
         if old.transaction_count() > 0 {
-            tracing::info!("flush_internal 2 ({from_watchdog}) (gen={flush_gen})");
+            // tracing::info!("flush_internal 2 ({from_watchdog}) (gen={flush_gen})");
             while Arc::strong_count(&old) > 1 {
                 std::hint::spin_loop();
             }
-            tracing::info!("flush_internal 3 ({from_watchdog}) (gen={flush_gen})");
+            // tracing::info!("flush_internal 3 ({from_watchdog}) (gen={flush_gen})");
             // once `old` is the only reference, we can call Arc::into_inner on it and send it down the
             // pipe
             let dg = Arc::into_inner(old).unwrap();
@@ -199,7 +199,7 @@ impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionSched
     }
 
     pub fn enqueue_transaction(&self, mut transaction: Transaction) -> TransactionFinished {
-        let (future, signal) = TransactionFinished::new();
+        let (future, signal) = TransactionFinished::new(transaction.no());
         transaction.set_finished(signal);
 
         let (orig_gen, stats) = {

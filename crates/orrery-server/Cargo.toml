@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 openraft = { version = "0.9.11", features = ["storage-v2", "serde"] }
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread"] }
-axum = { version = "0.7.5", features = ["macros"] }
+axum = { version = "0.7.5", features = ["macros", "ws"] }
 tower = "0.4.13"
 orrery-store = { path = "../orrery-store" }
 orrery-wire = { path = "../orrery-wire" }
@@ -22,3 +22,7 @@ clap = "4.5.4"
 rand = "0.9.0-alpha.1"
 serde_json_any_key = "2.0.0"
 rayon = "1.10.0"
+tokio-tungstenite = "0.23.0"
+headers = "0.4.0"
+axum-extra = { version = "0.9.3", features = ["typed-header"] }
+futures-util = "0.3.30"

@@ -2,18 +2,22 @@ use crate::client::ExecuteAPIResult;
 use crate::network::t;
 use crate::raft::state::StateMachine;
 use crate::raft::{NodeId, Request, TypeConfig};
-use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Error, Json, Router};
+use axum_extra::TypedHeader;
+use futures_util::{SinkExt, StreamExt};
 use openraft::error::{ClientWriteError, Infallible, RaftError};
 use openraft::raft::{
     AppendEntriesRequest, ClientWriteResponse, InstallSnapshotRequest, VoteRequest,
 };
 use openraft::{BasicNode, Raft, RaftMetrics, RaftTypeConfig};
-use orrery_store::{ExecutionError, TransactionFinished};
+use orrery_store::{ExecutionError, ExecutionResult, ExecutionResultFrame, TransactionFinished};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Formatter};
+use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -56,7 +60,8 @@ impl Clone for App {
 pub fn build_router(app: AppInner) -> Router {
     Router::new()
         .route("/", get(|| async { "Hello, world" }))
-        .route("/execute", post(execute))
+        .route("/connect", get(connect))
+        // .route("/execute", post(execute))
         .route("/add-learner", post(add_learner))
         .route("/change-membership", post(change_membership))
         .route("/init", post(init))
@@ -68,27 +73,149 @@ pub fn build_router(app: AppInner) -> Router {
 }
 
 #[tracing::instrument]
-async fn execute(
+async fn connect(
     app: State<App>,
-    Json(req): Json<Request>,
-) -> Json<
-    Result<Result<Vec<u8>, ExecutionError>, RaftError<NodeId, ClientWriteError<NodeId, BasicNode>>>,
-> {
-    // tracing::warn!("API: /execute");
-    Json(
-        match app.raft_instance.client_write(req).await.map(|r| {
-            r.data
-                .result
-                .expect("response to a transaction should be Some")
-        }) {
-            Ok(o) => match o {
-                Ok(f) => Ok(f.await.map(|v| v.returned_values)),
-                Err(e) => Ok(Err(e)),
-            },
-            Err(e) => Err(e),
-        },
-    )
+    ws: WebSocketUpgrade,
+    _user_agent: Option<TypedHeader<headers::UserAgent>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    // let user_agent = if let Some(TypedHeader(user_agent)) = user_agent {
+    //     user_agent.to_string()
+    // } else {
+    //     String::from("Unknown browser")
+    // };
+    if let Some(nid) = app.raft_instance.current_leader().await {
+        if nid == app.node_id {
+            tracing::info!("client at {addr} connecting to leader")
+        } else {
+            tracing::error!("client at {addr} connecting to non-leader node")
+        }
+    } else {
+        tracing::error!("client at {addr} connnected when no leader is present")
+    }
+    // finalize the upgrade process by returning upgrade callback.
+    // we can customize the callback by sending additional info such as address.
+    ws.on_upgrade(move |socket| handle_socket(app, socket, addr))
 }
+
+async fn handle_socket(app: State<App>, socket: WebSocket, who: SocketAddr) {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ExecutionResultFrame>();
+    let tx_arc = Arc::new(tx);
+    let mut handles = vec![];
+
+    let (mut sink, mut stream) = socket.split();
+
+    let mut sender = tokio::spawn(async move {
+        while let Some(resp) = rx.recv().await {
+            tracing::info!("Sending reply: {resp:?}");
+            let res_str = match serde_json::to_string(&resp) {
+                Ok(res_str) => res_str,
+                Err(err) => {
+                    tracing::error!("Failed to serialize response: {err}");
+                    break;
+                }
+            };
+            sink.send(Message::Text(res_str)).await.unwrap()
+        }
+        tracing::info!("SENDER finished");
+    });
+
+    let mut receiver = tokio::spawn(async move {
+        while let Some(msg) = stream.next().await {
+            tracing::info!("Received message: {msg:?}");
+            match msg {
+                Ok(msg) => match msg {
+                    Message::Text(s) => {
+                        let req = match serde_json::from_str::<Request>(&s) {
+                            Ok(req) => req,
+                            Err(err) => {
+                                tracing::error!("Failed to deserialize request: {err}");
+                                continue;
+                            }
+                        };
+                        let tx_no = req.transaction.tx_no;
+                        match app.raft_instance.client_write(req).await.map(|r| {
+                            r.data
+                                .result
+                                .expect("response to a transaction should be Some")
+                        }) {
+                            Ok(tx_res) => match tx_res {
+                                Ok(tf) => {
+                                    let tx2 = Arc::clone(&tx_arc);
+                                    tracing::info!("Waiting on TransactionFinished...");
+                                    handles.push(tokio::spawn(async move {
+                                        let res = tf.await;
+                                        tracing::info!("Transaction finished with result: {res:?}");
+                                        tx2.send(res).unwrap();
+                                    }));
+                                }
+                                Err(e) => tx_arc
+                                    .send(ExecutionResultFrame {
+                                        inner: Err(e),
+                                        txn_id: tx_no,
+                                    })
+                                    .unwrap(),
+                            },
+                            Err(raft_err) => {
+                                tracing::error!("Raft failure while attempting to submit transaction: {raft_err}");
+                                continue;
+                            }
+                        }
+                    }
+                    Message::Binary(b) => {
+                        panic!("Received binary message from client")
+                    }
+                    // ignore, handled for us
+                    Message::Ping(p) | Message::Pong(p) => {}
+                    Message::Close(_) => {
+                        tracing::info!("closing websocket from {who}");
+                        break;
+                    }
+                },
+                Err(err) => {
+                    tracing::error!("failed to receive message from {who}: {err}");
+                    break;
+                }
+            }
+        }
+        for handle in handles {
+            handle.abort();
+        }
+        tracing::info!("RECEIVER finished");
+    });
+
+    tokio::select! {
+        _ = &mut receiver => {
+            sender.abort();
+        },
+        _ = &mut sender => {
+            receiver.abort();
+        }
+    };
+}
+
+// #[tracing::instrument]
+// async fn execute(
+//     app: State<App>,
+//     Json(req): Json<Request>,
+// ) -> Json<
+//     Result<Result<Vec<u8>, ExecutionError>, RaftError<NodeId, ClientWriteError<NodeId, BasicNode>>>,
+// > {
+//     // tracing::warn!("API: /execute");
+//     Json(
+//         match app.raft_instance.client_write(req).await.map(|r| {
+//             r.data
+//                 .result
+//                 .expect("response to a transaction should be Some")
+//         }) {
+//             Ok(o) => match o {
+//                 Ok(f) => Ok(f.await.map(|v| v.returned_values)),
+//                 Err(e) => Ok(Err(e)),
+//             },
+//             Err(e) => Err(e),
+//         },
+//     )
+// }
 
 /// Add a node as **Learner**.
 ///

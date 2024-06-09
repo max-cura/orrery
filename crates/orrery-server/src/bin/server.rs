@@ -1,31 +1,38 @@
 use clap::Parser;
-use orrery_server::start_raft_node;
+use orrery_server::{get_config, start_raft_node};
+use std::path::PathBuf;
 
 #[derive(clap::Parser)]
-struct Node {
+struct Args {
+    #[arg(short = 'p', required = true)]
+    path: PathBuf,
     #[arg(short = 'n', required = true)]
-    num: usize,
+    num: u64,
     #[arg(short = 'j', required = true)]
     par: usize,
+    #[arg(short = 'v')]
+    verbose: bool,
 }
 
 fn main() {
-    // tracing_subscriber::fmt().with_level(true).init();
+    let args = Args::parse();
 
-    let node_config = Node::parse();
+    if args.verbose {
+        tracing_subscriber::fmt().with_level(true).init();
+    }
 
-    let net_configs = vec![
-        // (0, "127.0.0.1:80", "0.0.0.0:80"),
-        (0, "127.0.0.1:23001", "0.0.0.0:23001"),
-        (1, "127.0.0.1:23002", "0.0.0.0:23002"),
-        (2, "127.0.0.1:23003", "0.0.0.0:23003"),
-    ];
+    let cluster_config = get_config(args.path);
+    let net_config = cluster_config
+        .configs
+        .into_iter()
+        .find(|nc| nc.node_id == args.num)
+        .unwrap();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(start_raft_node(
-        net_configs[node_config.num].0,
-        net_configs[node_config.num].1.to_string(),
-        net_configs[node_config.num].2.to_string(),
-        node_config.par,
+        net_config.node_id,
+        net_config.addr,
+        net_config.listen_at,
+        args.par,
     ));
 }

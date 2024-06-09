@@ -16,6 +16,9 @@ use openraft::storage::RaftLogStorage;
 use openraft::Raft;
 use orrery_store::{Config, FixedConfigThreshold, PartitionLimits, PhaseController, Storage};
 use orrery_wire::TransactionRequest;
+use serde::Deserialize;
+use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -41,8 +44,8 @@ pub async fn start_raft_node(
 ) {
     let orrery_config = Config {
         partition_limits: PartitionLimits {
-            partition_max_write: 200,
-            partition_max_access: 200,
+            partition_max_write: 100,
+            partition_max_access: 100,
         },
         fixed_config_threshold: FixedConfigThreshold {
             max_access_set_size: 3000,
@@ -94,14 +97,33 @@ pub async fn start_raft_node(
 
     let router = build_router(app);
 
-    // run our app with hyper, listening globally on port 3000
-    // let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    // axum::serve(listener, app).await.unwrap();
-    // let router = Router::new().route("/", get(|| async { "Hello, World!" }));
-
     println!("listening at {bind_addr}");
     let listener = tokio::net::TcpListener::bind(bind_addr).await.unwrap();
-    axum::serve(listener, router).await.unwrap();
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 
     tracing::info!("Orrery node ({node_id}) terminating");
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NodeConfig {
+    pub node_id: u64,
+    pub addr: String,
+    pub listen_at: String,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClusterConfig {
+    pub configs: Vec<NodeConfig>,
+}
+pub fn get_config(f: impl AsRef<Path>) -> ClusterConfig {
+    let f = f.as_ref();
+    println!("opening {}", f.display());
+    let config: ClusterConfig =
+        serde_json::from_str(&std::fs::read_to_string(f).expect("couldn't open file"))
+            .expect("failed to deserialize");
+    config
 }

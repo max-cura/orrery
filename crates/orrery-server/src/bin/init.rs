@@ -1,16 +1,30 @@
+use clap::Parser;
 use maplit::btreeset;
 use orrery_server::client::Client;
+use orrery_server::get_config;
+use orrery_server::raft::NodeId;
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[derive(Debug, Parser)]
+struct Args {
+    #[arg(short = 'p', required = true)]
+    path: PathBuf,
+    nodes: Vec<NodeId>,
+}
+
 #[tokio::main]
 async fn main() {
-    let net_configs = vec![
-        (0, "127.0.0.1:23001"),
-        (1, "127.0.0.1:23002"),
-        (2, "127.0.0.1:23003"),
-    ];
+    let args = Args::parse();
+    let net_configs: Vec<(NodeId, String)> = get_config(args.path)
+        .configs
+        .into_iter()
+        .map(|cfg| (cfg.node_id, cfg.addr))
+        .collect();
 
+    let numbers = args.nodes;
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     let client = Arc::new(Client::new(0, net_configs[0].1.to_string()));
@@ -19,18 +33,22 @@ async fn main() {
     client.init().await.unwrap();
 
     println!("Metrics: {:?}", client.metrics().await.unwrap());
-    println!("Adding learners...");
-    client
-        .add_learner((net_configs[1].0, net_configs[1].1.to_string()))
-        .await
-        .unwrap();
-    client
-        .add_learner((net_configs[2].0, net_configs[2].1.to_string()))
-        .await
-        .unwrap();
 
-    println!("Adding learners... done");
-    println!("Metrics: {:?}", client.metrics().await.unwrap());
-
-    client.change_membership(&btreeset! {0,1,2}).await.unwrap();
+    if !numbers.is_empty() {
+        println!("Adding learners...");
+        for &number in &numbers {
+            if number != 0 {
+                let i = net_configs.iter().position(|nc| nc.0 == number).unwrap();
+                client
+                    .add_learner((net_configs[i].0, net_configs[i].1.to_string()))
+                    .await
+                    .unwrap();
+            }
+        }
+        println!("Adding learners... done");
+        client
+            .change_membership(&BTreeSet::from_iter(numbers.into_iter()))
+            .await
+            .unwrap();
+    }
 }

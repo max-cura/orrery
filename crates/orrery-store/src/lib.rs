@@ -56,7 +56,7 @@ impl Inner {
         if batch.len() == 0 {
             return;
         }
-        println!("submitted batch, size={}", batch.len());
+        // println!("submitted batch, size={}", batch.len());
         tracing::info!("submit with batch size={}", batch.len());
         self.flag.store(true, Ordering::SeqCst);
         {
@@ -246,6 +246,11 @@ pub struct ExecutionSuccess {
     pub returned_values: Vec<u8>,
 }
 pub type ExecutionResult = Result<ExecutionSuccess, ExecutionError>;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExecutionResultFrame {
+    pub inner: Result<Vec<u8>, ExecutionError>,
+    pub txn_id: usize,
+}
 
 #[derive(Debug, Serialize, Deserialize, Error)]
 pub enum ReadError {

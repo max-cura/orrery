@@ -1,4 +1,4 @@
-use crate::ExecutionResult;
+use crate::{ExecutionResult, ExecutionResultFrame};
 use std::fmt::{Debug, Formatter};
 use std::future::Future;
 use std::pin::Pin;
@@ -12,6 +12,7 @@ pub struct TransactionFinishedInner {
     waker: parking_lot::Mutex<Option<Waker>>,
 
     ext: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send + 'static>>>,
+    ext_tx_no: usize,
 }
 impl Debug for TransactionFinishedInner {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -27,6 +28,7 @@ impl Debug for TransactionFinishedInner {
                     &"None"
                 },
             )
+            .field("ext_tx_no", &self.ext_tx_no)
             .finish()
     }
 }
@@ -35,12 +37,13 @@ impl Debug for TransactionFinishedInner {
 pub struct TransactionFinished(Arc<TransactionFinishedInner>);
 
 impl TransactionFinishedInner {
-    pub fn new() -> Self {
+    pub fn new(tx_no: usize) -> Self {
         TransactionFinishedInner {
             value: parking_lot::Mutex::new(None),
             finished: AtomicBool::new(false),
             waker: parking_lot::Mutex::new(None),
             ext: parking_lot::Mutex::new(None),
+            ext_tx_no: tx_no,
         }
     }
     pub fn finish(self: Arc<Self>, result: ExecutionResult) {
@@ -63,8 +66,8 @@ impl TransactionFinishedInner {
 }
 
 impl TransactionFinished {
-    pub fn new() -> (Self, Arc<TransactionFinishedInner>) {
-        let arc = Arc::new(TransactionFinishedInner::new());
+    pub fn new(txn_id: usize) -> (Self, Arc<TransactionFinishedInner>) {
+        let arc = Arc::new(TransactionFinishedInner::new(txn_id));
         let this = Self(Arc::clone(&arc));
         (this, arc)
     }
@@ -74,7 +77,7 @@ impl TransactionFinished {
 }
 
 impl Future for TransactionFinished {
-    type Output = ExecutionResult;
+    type Output = ExecutionResultFrame;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.0.finished.load(Ordering::SeqCst) {
@@ -85,7 +88,10 @@ impl Future for TransactionFinished {
             if let Some(ext) = (&mut self.0.ext.lock()).take() {
                 ext();
             }
-            Poll::Ready(value)
+            Poll::Ready(ExecutionResultFrame {
+                inner: value.map(|x| x.returned_values),
+                txn_id: self.0.ext_tx_no,
+            })
         } else {
             {
                 let mut guard = self.0.waker.lock();
@@ -104,7 +110,10 @@ impl Future for TransactionFinished {
                 if let Some(ext) = (&mut self.0.ext.lock()).take() {
                     ext();
                 }
-                Poll::Ready(value)
+                Poll::Ready(ExecutionResultFrame {
+                    inner: value.map(|x| x.returned_values),
+                    txn_id: self.0.ext_tx_no,
+                })
             } else {
                 Poll::Pending
             }
