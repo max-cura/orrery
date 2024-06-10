@@ -193,14 +193,16 @@ async fn handle_socket(app: State<App>, mut socket: WebSocket, who: SocketAddr) 
                     }
                     Message::Binary(_) => {}
                     Message::Ping(_) => {
-                        socket.send(Message::Pong(vec![])).await.unwrap();
+                        if let Err(err) = socket.send(Message::Pong(vec![])).await {
+                            tracing::error!("SERVER failed to send PONG to {who}: {err}");
+                        }
                     }
                     Message::Pong(_) => {
-                        tracing::error!("SERVER received PONG from CLIENT");
+                        tracing::error!("SERVER received PONG from CLIENT ({who})");
                         break
                     }
                     Message::Close(_) => {
-                        tracing::info!("SERVER Received CLOSE from CLIENT");
+                        tracing::info!("SERVER Received CLOSE from CLIENT ({who})");
                         break
                     }
                 }

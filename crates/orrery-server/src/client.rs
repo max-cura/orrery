@@ -13,6 +13,7 @@ use orrery_store::{ExecutionError, ExecutionResult, ExecutionResultFrame};
 use orrery_wire::{Object, Op, TransactionRequest};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::future::Future;
@@ -24,6 +25,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio::task::{AbortHandle, JoinHandle};
 use tokio::time::Instant;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::{client, Message};
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tracing::warn;
@@ -119,7 +122,13 @@ impl RemoteConnection {
                     }
                 }
             }
-            if let Err(err) = websocket.close(None).await {
+            if let Err(err) = websocket
+                .close(Some(CloseFrame {
+                    code: CloseCode::Normal,
+                    reason: Cow::from("normal"),
+                }))
+                .await
+            {
                 tracing::info!("{client_id_clone}: failed to close websocket: {err}");
             }
         });
