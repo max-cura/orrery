@@ -94,7 +94,7 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<StateMachine> {
                     .collect::<Vec<_>>(),
             };
             let s = serde_json::to_vec(&snapshot_frame).map_err(|e| {
-                // panic!("failed to build snapshot: {e}");
+                tracing::error!("failed to build snapshot: {e}");
                 StorageIOError::read_state_machine(&e)
             })?;
             tracing::info!("storage unlocked: snapshot");

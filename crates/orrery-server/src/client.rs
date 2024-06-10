@@ -62,7 +62,7 @@ impl RemoteConnection {
         let (abort_notify, mut abort_wait) = oneshot::channel();
 
         let join_handle = tokio::spawn(async move {
-            let mut ping_timeout = tokio::time::sleep(Duration::from_millis(20));
+            let mut ping_timeout = tokio::time::sleep(Duration::from_millis(10));
             tokio::pin!(ping_timeout);
             loop {
                 tokio::select! {

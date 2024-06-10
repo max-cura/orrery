@@ -195,6 +195,7 @@ async fn handle_socket(app: State<App>, mut socket: WebSocket, who: SocketAddr) 
                     Message::Ping(_) => {
                         if let Err(err) = socket.send(Message::Pong(vec![])).await {
                             tracing::error!("SERVER failed to send PONG to {who}: {err}");
+                            break
                         }
                     }
                     Message::Pong(_) => {
