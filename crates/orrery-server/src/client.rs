@@ -26,7 +26,6 @@ use tokio::task::{AbortHandle, JoinHandle};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::{client, Message};
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
-use tokio_tungstenite_keepalive::KeptAliveWebSocket;
 use tracing::warn;
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
