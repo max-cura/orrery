@@ -3,5 +3,6 @@ resolver = "2"
 members = [
     "crates/orrery-server",
     "crates/orrery-store",
-    "crates/orrery-wire"
+    "crates/orrery-wire",
+    "crates/tokio-tungstenite-keepalive",
 ]

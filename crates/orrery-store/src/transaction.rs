@@ -312,6 +312,7 @@ pub struct Transaction {
     pub(crate) write_set: AccessSet,
     pub(crate) intersect_set: Vec<usize>,
     number: usize,
+    client_number: usize,
     finished: Option<Arc<TransactionFinishedInner>>,
     resolved: Vec<ResolvedOp>,
     input_objects: Vec<Object>,
@@ -321,6 +322,7 @@ impl Transaction {
         readonly_set: AccessSet,
         write_set: AccessSet,
         number: usize,
+        client_number: usize,
         resolved: Vec<ResolvedOp>,
         input_objects: Vec<Object>,
     ) -> Self {
@@ -329,10 +331,14 @@ impl Transaction {
             write_set,
             intersect_set: vec![],
             number,
+            client_number,
             finished: None,
             resolved,
             input_objects,
         }
+    }
+    pub fn client_no(&self) -> usize {
+        self.client_number
     }
     pub fn no(&self) -> usize {
         self.number

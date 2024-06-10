@@ -199,7 +199,7 @@ impl<TH: Threshold, F: Fn(Batch) -> () + Send + Sync + 'static> TransactionSched
     }
 
     pub fn enqueue_transaction(&self, mut transaction: Transaction) -> TransactionFinished {
-        let (future, signal) = TransactionFinished::new(transaction.no());
+        let (future, signal) = TransactionFinished::new(transaction.client_no());
         transaction.set_finished(signal);
 
         let (orig_gen, stats) = {

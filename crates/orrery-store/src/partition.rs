@@ -150,7 +150,7 @@ impl Partition {
         self.txn_nos.push(txn.no());
         self.transactions.push(txn);
 
-        tracing::info!("self={self:?}");
+        // tracing::info!("self={self:?}");
 
         if self.write_set.len() > 0 {
             // small sanity check

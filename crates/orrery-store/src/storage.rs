@@ -39,7 +39,7 @@ impl Storage {
     }
     /// DO NOT USE
     unsafe fn put(&self, table_ref: (usize, usize), value: Object) {
-        tracing::warn!("PUT AT ({},{}), OBJ={value:?}", table_ref.0, table_ref.1);
+        // tracing::warn!("PUT AT ({},{}), OBJ={value:?}", table_ref.0, table_ref.1);
         self.tables[table_ref.0].put(table_ref.1, value);
     }
     pub unsafe fn apply(&self, dc: WriteCache) {

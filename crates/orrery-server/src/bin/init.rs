@@ -25,7 +25,6 @@ async fn main() {
         .collect();
 
     let numbers = args.nodes;
-    tokio::time::sleep(Duration::from_millis(1000)).await;
 
     let client = Arc::new(Client::new(0, net_configs[0].1.to_string()));
 

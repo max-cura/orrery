@@ -98,33 +98,44 @@ async fn connect(
     ws.on_upgrade(move |socket| handle_socket(app, socket, addr))
 }
 
-async fn handle_socket(app: State<App>, socket: WebSocket, who: SocketAddr) {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ExecutionResultFrame>();
-    let tx_arc = Arc::new(tx);
-    let mut handles = vec![];
+async fn handle_socket(app: State<App>, mut socket: WebSocket, who: SocketAddr) {
+    let mut open_transaction_task_handles = vec![];
 
-    let (mut sink, mut stream) = socket.split();
+    let (outgoing_enqueue, mut outgoing_pop) = tokio::sync::mpsc::unbounded_channel();
+    let outgoing_enqueue = Arc::new(outgoing_enqueue);
 
-    let mut sender = tokio::spawn(async move {
-        while let Some(resp) = rx.recv().await {
-            tracing::info!("Sending reply: {resp:?}");
-            let res_str = match serde_json::to_string(&resp) {
-                Ok(res_str) => res_str,
-                Err(err) => {
-                    tracing::error!("Failed to serialize response: {err}");
-                    break;
+    loop {
+        tokio::select! {
+            outgoing = outgoing_pop.recv() => {
+                if let Some(msg) = outgoing {
+                    let response_string =
+                        match serde_json::to_string(&msg) {
+                            Ok(s) => s,
+                            Err(err) => {
+                                tracing::error!(
+                                "Failed to serialize error result from transaction: {err}"
+                            );
+                                continue;
+                            }
+                        };
+                    if let Err(err) = socket.send(Message::Text(response_string)).await {
+                        tracing::error!("Error sending message to {who}: {err}");
+                    }
                 }
-            };
-            sink.send(Message::Text(res_str)).await.unwrap()
-        }
-        tracing::info!("SENDER finished");
-    });
-
-    let mut receiver = tokio::spawn(async move {
-        while let Some(msg) = stream.next().await {
-            tracing::info!("Received message: {msg:?}");
-            match msg {
-                Ok(msg) => match msg {
+            }
+            msg = socket.recv() => {
+                let Some(msg) = msg else {
+                    tracing::error!("Websocket from {who} has closed");
+                    break;
+                };
+                let msg = match msg {
+                    Ok(m) => m,
+                    Err(err) => {
+                        tracing::error!("Failed to read from WS {who}: {err}");
+                        break;
+                    }
+                };
+                match msg {
                     Message::Text(s) => {
                         let req = match serde_json::from_str::<Request>(&s) {
                             Ok(req) => req,
@@ -133,65 +144,185 @@ async fn handle_socket(app: State<App>, socket: WebSocket, who: SocketAddr) {
                                 continue;
                             }
                         };
-                        let tx_no = req.transaction.tx_no;
+                        let client_tx_no = req.transaction.tx_no;
+                        let client = req.transaction.client_id.clone();
+                        tracing::info!("received message from {client}");
                         match app.raft_instance.client_write(req).await.map(|r| {
                             r.data
                                 .result
                                 .expect("response to a transaction should be Some")
                         }) {
-                            Ok(tx_res) => match tx_res {
-                                Ok(tf) => {
-                                    let tx2 = Arc::clone(&tx_arc);
-                                    tracing::info!("Waiting on TransactionFinished...");
-                                    handles.push(tokio::spawn(async move {
-                                        let res = tf.await;
-                                        tracing::info!("Transaction finished with result: {res:?}");
-                                        tx2.send(res).unwrap();
+                            Ok(enqueue_result) => match enqueue_result {
+                                Ok(transaction_finished_future) => {
+                                    let outgoing_enqueue = Arc::clone(&outgoing_enqueue);
+                                    open_transaction_task_handles.push(tokio::spawn(async move {
+                                        let transaction_result = transaction_finished_future.await;
+                                        tracing::info!("Transaction finished with result: {transaction_result:?}");
+                                        let send_result = outgoing_enqueue.send(transaction_result);
+                                        if let Err(err) = send_result {
+                                            tracing::error!(
+                                                "Failed to send result to {who} aka {client}: {err}"
+                                            );
+                                        }
                                     }));
                                 }
-                                Err(e) => tx_arc
-                                    .send(ExecutionResultFrame {
-                                        inner: Err(e),
-                                        txn_id: tx_no,
-                                    })
-                                    .unwrap(),
+                                Err(err) => {
+                                    let response_string =
+                                        match serde_json::to_string(&ExecutionResultFrame {
+                                            inner: Err(err),
+                                            txn_id: client_tx_no,
+                                        }) {
+                                            Ok(s) => s,
+                                            Err(err) => {
+                                                tracing::error!(
+                                                "Failed to serialize error result from transaction: {err}"
+                                            );
+                                                continue;
+                                            }
+                                        };
+                                    if let Err(err) = socket.send(Message::Text(response_string)).await {
+                                        tracing::error!("Error sending message to {who}: {err}");
+                                    }
+                                }
                             },
-                            Err(raft_err) => {
-                                tracing::error!("Raft failure while attempting to submit transaction: {raft_err}");
-                                continue;
+                            Err(err) => {
+                                tracing::error!("Raft failure while attempting to client_write() message from {client}@{who}: {err}");
+                                break;
                             }
                         }
                     }
-                    Message::Binary(b) => {
-                        panic!("Received binary message from client")
+                    Message::Binary(_) => {}
+                    Message::Ping(_) => {
+                        socket.send(Message::Pong(vec![])).await.unwrap();
                     }
-                    // ignore, handled for us
-                    Message::Ping(p) | Message::Pong(p) => {}
+                    Message::Pong(_) => {
+                        tracing::error!("SERVER received PONG from CLIENT");
+                        break
+                    }
                     Message::Close(_) => {
-                        tracing::info!("closing websocket from {who}");
-                        break;
+                        tracing::info!("SERVER Received CLOSE from CLIENT");
+                        break
                     }
-                },
-                Err(err) => {
-                    tracing::error!("failed to receive message from {who}: {err}");
-                    break;
                 }
             }
         }
-        for handle in handles {
-            handle.abort();
-        }
-        tracing::info!("RECEIVER finished");
-    });
+    }
 
-    tokio::select! {
-        _ = &mut receiver => {
-            sender.abort();
-        },
-        _ = &mut sender => {
-            receiver.abort();
-        }
-    };
+    tracing::info!("RECEIVER socket handler exited, waiting for open transactions...");
+
+    for handle in open_transaction_task_handles {
+        handle.await.unwrap();
+    }
+    tracing::info!("RECEIVER Finished handling socket")
+
+    // let (mut sink, mut stream) = socket.split();
+    //
+    // let mut sender = tokio::spawn(async move {
+    //     while let Some(resp) = rx.recv().await {
+    //         let res_str = match serde_json::to_string(&resp) {
+    //             Ok(res_str) => res_str,
+    //             Err(err) => {
+    //                 tracing::error!("Failed to serialize response: {err}");
+    //                 break;
+    //             }
+    //         };
+    //         tracing::info!("Sending message to {who}: {resp:?}");
+    //         if let Err(err) = sink.send(Message::Text(res_str)).await {
+    //             tracing::error!("Error sending message to {who}: {err}");
+    //             break;
+    //         }
+    //     }
+    //     tracing::info!("SENDER finished");
+    // });
+    //
+    // let mut receiver = tokio::spawn(async move {
+    //     let mut handles = vec![];
+    //     while let Some(msg) = stream.next().await {
+    //         // tracing::info!("Received message: {msg:?}");
+    //         match msg {
+    //             Ok(msg) => match msg {
+    //                 Message::Text(s) => {
+    //                     let req = match serde_json::from_str::<Request>(&s) {
+    //                         Ok(req) => req,
+    //                         Err(err) => {
+    //                             tracing::error!("Failed to deserialize request: {err}");
+    //                             continue;
+    //                         }
+    //                     };
+    //                     let tx_no = req.transaction.tx_no;
+    //                     let client = req.transaction.client_id.clone();
+    //                     tracing::info!("received message from {client}");
+    //                     match app.raft_instance.client_write(req).await.map(|r| {
+    //                         r.data
+    //                             .result
+    //                             .expect("response to a transaction should be Some")
+    //                     }) {
+    //                         Ok(tx_res) => match tx_res {
+    //                             Ok(tf) => {
+    //                                 let tx2 = Arc::clone(&tx_arc);
+    //                                 tracing::info!(
+    //                                     "Waiting on TransactionFinished (client {who} aka {client})..."
+    //                                 );
+    //                                 let (abort_tx, abort_rx) =
+    //                                     tokio::sync::oneshot::channel::<()>();
+    //                                 // handles.push(abort_tx);
+    //                                 handles.push(tokio::spawn(async move {
+    //                                     let res = tf.await;
+    //                                     // tokio::select!(
+    //                                     //     res = tf => {
+    //                                             tracing::info!("Transaction finished with result: {res:?}");
+    //                                             let r = tx2.send(res);
+    //                                             if let Err(err) = r {
+    //                                                 tracing::error!("Failed to send result to {who} aka {client}: {err}")
+    //                                             }
+    //                                     //     }
+    //                                     //     _ = abort_rx => {
+    //                                     //         // tracing::info!("")
+    //                                     //     }
+    //                                     // )
+    //                                 }));
+    //                             }
+    //                             Err(e) => tx_arc
+    //                                 .send(ExecutionResultFrame {
+    //                                     inner: Err(e),
+    //                                     txn_id: tx_no,
+    //                                 })
+    //                                 .unwrap(),
+    //                         },
+    //                         Err(raft_err) => {
+    //                             tracing::error!("Raft failure while attempting to submit transaction: {raft_err}");
+    //                             continue;
+    //                         }
+    //                     }
+    //                 }
+    //                 Message::Binary(b) => {
+    //                     panic!("Received binary message from client")
+    //                 }
+    //                 Message::Ping(p) => {
+    //                     // tracing::info!("SERVER: PING")
+    //                 }
+    //                 Message::Pong(_) => {
+    //                     // tracing::info!("SERVER: PONG")
+    //                 }
+    //                 Message::Close(_) => {
+    //                     tracing::info!("closing websocket from {who}");
+    //                     break;
+    //                 }
+    //             },
+    //             Err(err) => {
+    //                 tracing::error!("failed to receive message from {who}: {err}");
+    //                 break;
+    //             }
+    //         }
+    //     }
+    //     tracing::info!("RECEIVER aborting outstanding handles");
+    //     for handle in handles {
+    //         handle.await.unwrap();
+    //     }
+    //     tracing::info!("RECEIVER finished");
+    // });
+    //
+    // tokio::join!(receiver, sender);
 }
 
 // #[tracing::instrument]

@@ -136,7 +136,7 @@ pub fn prepare_query(
         ir,
         const_buf,
         client_id: _,
-        tx_no: _,
+        tx_no: client_tx_no,
     } = transaction_request;
     let mut resolved_ops: Vec<ResolvedOp> = vec![];
     let mut tr_write = vec![];
@@ -201,6 +201,7 @@ pub fn prepare_query(
         aset_read,
         aset_write,
         number,
+        client_tx_no,
         resolved_ops,
         const_buf,
     ))
