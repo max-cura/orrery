@@ -69,6 +69,27 @@ impl RowSet {
             }
         });
     }
+    pub fn subtracted_len(&self, rhs: &RowSet) -> usize {
+        if self.rows.is_empty() {
+            return 0;
+        } else if rhs.rows.is_empty() {
+            return self.rows.len();
+        }
+        let mut j = 0;
+        self.rows.iter().fold(0usize, |acc, &r| {
+            while j < rhs.rows.len() && rhs.rows[j] < r {
+                j += 1;
+            }
+            if j >= rhs.rows.len() {
+                acc + 1
+            } else if rhs.rows[j] == r {
+                j += 1;
+                acc
+            } else {
+                acc + 1
+            }
+        })
+    }
     pub fn union_nonoverlapping_unchecked_(&mut self, rhs: &RowSet) {
         self.rows.extend_from_slice(&rhs.rows);
         self.rows.sort_unstable();
@@ -185,6 +206,28 @@ impl AccessSet {
                 true
             }
         });
+    }
+    pub fn subtracted_len(&self, rhs: &AccessSet) -> usize {
+        if self.row_sets.is_empty() {
+            return 0;
+        } else if rhs.row_sets.is_empty() {
+            return self.len();
+        }
+        let mut j = 0;
+        self.row_sets.iter().fold(0usize, |acc, r| {
+            while j < rhs.row_sets.len() && rhs.row_sets[j].table < r.table {
+                j += 1;
+            }
+            if j >= rhs.row_sets.len() {
+                acc + r.rows.len()
+            } else if rhs.row_sets[j].table == r.table {
+                let res = acc + r.subtracted_len(&rhs.row_sets[j]);
+                j += 1;
+                res
+            } else {
+                acc + r.rows.len()
+            }
+        })
     }
     pub fn iter_keys(&self) -> AccessKeysIter {
         AccessKeysIter {

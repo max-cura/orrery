@@ -144,7 +144,7 @@ impl RemoteConnection {
     }
 }
 
-// pub struct RemoteConn {
+// pub struct RemoteConnection {
 //     leader: (NodeId, String),
 //     pub client_id: String,
 //     next_txn_id: usize,
@@ -226,7 +226,10 @@ impl RemoteConnection {
         &mut self,
         ops: Vec<Op>,
         const_buf: Vec<Object>,
-    ) -> Result<oneshot::Receiver<ExecutionResultFrame>, SendError<Message>> {
+    ) -> Result<
+        oneshot::Receiver<ExecutionResultFrame>,
+        SendError<Message>, // tokio_tungstenite::tungstenite::Error,
+    > {
         let txn_id = self.next_txn_id;
         self.next_txn_id += 1;
         let txn_req = TransactionRequest {
@@ -238,12 +241,17 @@ impl RemoteConnection {
 
         let (tx, rx) = oneshot::channel();
         self.deferred.insert(txn_id, tx);
-        if let Err(err) = self.exec_queue_push.send(Message::Text(
-            serde_json::to_string(&Request {
-                transaction: txn_req,
-            })
-            .unwrap(),
-        )) {
+        if let Err(err) = self
+            // .sender
+            .exec_queue_push
+            .send(Message::Text(
+                serde_json::to_string(&Request {
+                    transaction: txn_req,
+                })
+                .unwrap(),
+            ))
+        // .await
+        {
             tracing::error!(
                 "Error sending transaction no {txn_id} for execution for {}: {err}",
                 self.client_id
@@ -256,6 +264,9 @@ impl RemoteConnection {
 
     pub async fn finish(mut self) {
         tracing::info!("Dropping RemoteConn {}", self.client_id.clone());
+        // self.sender.close().await.unwrap();
+        // self.abort_tx.unwrap().send(()).unwrap();
+        // self.recv_hdl.unwrap().await.unwrap();
         self.abort_notify.take().unwrap().send(()).unwrap();
         self.join_handle.take().unwrap().await.unwrap();
         tracing::info!("Dropping RemoteConn {}... done", self.client_id.clone());

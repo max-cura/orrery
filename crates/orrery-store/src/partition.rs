@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::time::Instant;
 
 pub struct DependencyGraphBuilder {
     // (table, row) -> (write?, TxId[])
@@ -169,17 +170,19 @@ impl Partition {
         // ros = R(T) \ W(P)
         // R'(P) = (R(P) \ W(T)) u ros
         // W'(P) = W(T) u W(P)
-        let mut ros = txn.readonly_set.clone();
-        ros.subtract_(&self.write_set);
-        ros.subtract_(&self.readonly_set);
-        let mut ws = txn.write_set.clone();
-        ws.subtract_(&self.write_set);
-        let new_read_size = self.readonly_set.len() + ros.len();
-        let new_write_size = self.write_set.len() + ws.len();
-        let new_access_size = new_read_size + new_write_size;
+        // let tx_ros_sl = txn.readonly_set.subtracted_len(self.)
+        // let new_read_size = self.readonly_set.len() + ros.len();
+        let tx_write_sl = txn.write_set.subtracted_len(&self.write_set);
+        let new_write_size = self.write_set.len() + tx_write_sl;
+        // let new_access_size = new_read_size + new_write_size;
         if new_write_size <= limits.partition_max_write
-            && new_access_size <= limits.partition_max_access
+        // && new_access_size <= limits.partition_max_access
         {
+            let mut ros = txn.readonly_set.clone();
+            ros.subtract_(&self.write_set);
+            ros.subtract_(&self.readonly_set);
+            let mut ws = txn.write_set.clone();
+            ws.subtract_(&self.write_set);
             self.readonly_set.subtract_(&ws);
             self.readonly_set.union_nonoverlapping_unchecked_(&ros);
             self.write_set.union_nonoverlapping_unchecked_(&ws);
@@ -252,28 +255,48 @@ impl PartitionDispatcher {
             if self.transactions.is_empty() {
                 break 'outer;
             }
-            p.add(self.transactions.pop_first().unwrap().1);
-            'inner: loop {
-                if i == p.transactions.len() {
-                    break 'inner;
+            let t1 = Instant::now();
+            'middle: loop {
+                if self.transactions.is_empty() {
+                    break 'middle;
                 }
-                for j in 0..p.transactions[i].intersect_set.len() {
-                    let ix_txn_no = p.transactions[i].intersect_set[j];
-                    if !p.txn_nos.contains(&ix_txn_no) && self.transactions.contains_key(&ix_txn_no)
-                    {
-                        let txn = self.transactions.remove(&ix_txn_no).unwrap();
-                        match p.try_add(txn, partition_limits) {
-                            Ok(()) => {}
-                            Err(txn) => {
-                                self.defer_set.insert(ix_txn_no, txn);
+                // insert 1 tx
+                if let Err(t) =
+                    p.try_add(self.transactions.pop_first().unwrap().1, partition_limits)
+                {
+                    self.transactions.insert(t.no(), t);
+                    break;
+                }
+                // check over all transactions in block, check their intersection sets and try to add
+                'inner: loop {
+                    if i == p.transactions.len() {
+                        break 'inner;
+                    }
+                    for j in 0..p.transactions[i].intersect_set.len() {
+                        let ix_txn_no = p.transactions[i].intersect_set[j];
+                        if !p.txn_nos.contains(&ix_txn_no)
+                            && self.transactions.contains_key(&ix_txn_no)
+                        {
+                            let txn = self.transactions.remove(&ix_txn_no).unwrap();
+                            match p.try_add(txn, partition_limits) {
+                                Ok(()) => {}
+                                Err(txn) => {
+                                    self.defer_set.insert(ix_txn_no, txn);
+                                }
                             }
                         }
                     }
+                    i += 1;
                 }
-                i += 1;
             }
+            let t2 = Instant::now();
             // no more transactions to add
             let p2 = std::mem::replace(&mut p, Partition::empty());
+            println!(
+                "dispatched partition with size {} in {:?}",
+                p2.transactions.len(),
+                t2 - t1
+            );
             submit(p2);
             i = 0;
         }

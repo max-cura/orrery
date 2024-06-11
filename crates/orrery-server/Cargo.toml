@@ -27,3 +27,4 @@ headers = "0.4.0"
 axum-extra = { version = "0.9.3", features = ["typed-header"] }
 futures-util = "0.3.30"
 indicatif = "0.17.8"
+console-subscriber = "0.3.0"

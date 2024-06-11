@@ -29,6 +29,7 @@ async fn main() {
     let r = rc
         .execute(vec![Op::Read(RowLocator::new("g", vec![12]))], vec![])
         .await
+        .unwrap()
         .await;
     println!("TX0 (READ ROW 12): {:?}", r);
 
@@ -39,6 +40,7 @@ async fn main() {
             vec![Object::Bool(true)],
         )
         .await
+        .unwrap()
         .await;
     println!("TX1 (INSERT ROW 12): {:?}", r);
 
@@ -46,6 +48,7 @@ async fn main() {
     let r = rc
         .execute(vec![Op::Read(RowLocator::new("g", vec![12]))], vec![])
         .await
+        .unwrap()
         .await;
     println!("TX2 (READ ROW 12): {:?}", r);
 

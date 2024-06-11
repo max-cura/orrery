@@ -36,16 +36,19 @@ async fn main() {
     if args.verbose {
         tracing_subscriber::fmt().with_level(true).init();
     }
+    // console_subscriber::init();
 
     println!("CLICNT,TXCNT,TXOPS,MIN,MAX,AVG");
 
-    // let fanouts = [1, 2, 4, 8, 16, 32, 64, 128, 256];
-    let fanouts = [32];
-    // let blades = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
-    // let blades = [512];
-    let blades = [512];
-    // let opcounts = [1, 10, 25, 50, 75, 100];
-    let opcounts = [75];
+    let fanouts = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+    // // let fanouts = [32];
+    let blades = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
+    // // let blades = [512];
+    let opcounts = [1, 10, 25, 50, 75, 100];
+    // // let opcounts = [75];
+
+    // runbench(128, 8192, 100, Arc::clone(&client)).await;
+    // runbench(8, 8192, 100, Arc::clone(&client)).await;
 
     for fanout in fanouts {
         for blade in blades {
@@ -70,7 +73,7 @@ async fn runbench(fanout: usize, blade: usize, ops: usize, client: Arc<Client>) 
                 for j in 0..blade {
                     let mut ir = vec![];
                     for _ in 0..ops {
-                        let row = rand::thread_rng().gen_range(0..10000u64);
+                        let row = rand::thread_rng().gen_range(0..1000u64);
                         ir.push(Op::Put(
                             RowLocator::new("g", Vec::from_iter(row.to_le_bytes().into_iter())),
                             0,
@@ -125,12 +128,12 @@ async fn runbench(fanout: usize, blade: usize, ops: usize, client: Arc<Client>) 
     }
     pb.finish_and_clear();
     println!(
-        "{},{},{},{:?},{:?},{:?}",
+        "{},{},{},{},{},{}",
         fanout,
         blade,
         ops,
-        times.iter().min().unwrap(),
-        times.iter().max().unwrap(),
-        times.iter().sum::<Duration>() / 10,
+        times.iter().min().unwrap().as_millis(),
+        times.iter().max().unwrap().as_millis(),
+        (times.iter().sum::<Duration>() / 10).as_millis(),
     );
 }

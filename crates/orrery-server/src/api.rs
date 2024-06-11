@@ -218,6 +218,9 @@ async fn handle_socket(app: State<App>, mut socket: WebSocket, who: SocketAddr) 
     }
     tracing::info!("RECEIVER Finished handling socket")
 
+    // let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    // let tx_arc = Arc::new(tx);
+    //
     // let (mut sink, mut stream) = socket.split();
     //
     // let mut sender = tokio::spawn(async move {
